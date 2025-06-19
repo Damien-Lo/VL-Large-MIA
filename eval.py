@@ -28,15 +28,19 @@ def sweep(score, x):
     return fpr, tpr, auc(fpr, tpr), acc
 
 
-def do_plot(prediction, answers, sweep_fn=sweep, metric='auc', legend="", output_dir=None):
+def do_plot(prediction, answers, sweep_fn=sweep, metric='auc', legend="", output_dir=None, fpr_cap=0.05):
     """
     Generate the ROC curves by using ntest models as test models and the rest to train.
     """
+    fpr_cap = fpr_cap
+    
     fpr, tpr, auc, acc = sweep_fn(np.array(prediction), np.array(answers, dtype=bool))
 
-    low = tpr[np.where(fpr<.05)[0][-1]]
+
+    # Cap the FPR at the defined fpr_cap
+    low = tpr[np.where(fpr<fpr_cap)[0][-1]]
     # bp()
-    print('Attack %s   AUC %.4f, Accuracy %.4f, TPR@5%%FPR of %.4f\n'%(legend, auc,acc, low))
+    print(f'Attack %s   AUC %.4f, Accuracy %.4f, TPR@{fpr_cap*100}%%FPR of %.4f\n'%(legend, auc,acc, low))
 
     metric_text = ''
     if metric == 'auc':
@@ -47,10 +51,11 @@ def do_plot(prediction, answers, sweep_fn=sweep, metric='auc', legend="", output
     plt.plot(fpr, tpr, label=legend+metric_text)
     return legend, auc,acc, low
 
-def fig_fpr_tpr(all_output, output_dir):
+def fig_fpr_tpr(all_output, output_dir, fpr_cap):
     print("output_dir", output_dir)
     answers = []
     metric2predictions = defaultdict(list)
+    
     for ex in all_output:
         answers.append(ex["label"])
         for metric in ex["pred"].keys():
@@ -61,8 +66,8 @@ def fig_fpr_tpr(all_output, output_dir):
     plt.figure(figsize=(4,3))
     with open(f"{output_dir}/auc.txt", "w") as f:
         for metric, predictions in metric2predictions.items():
-            legend, auc, acc, low = do_plot(predictions, answers, legend=metric, metric='auc', output_dir=output_dir)
-            f.write('%s   AUC %.4f, Accuracy %.4f, TPR@5%%FPR of %.4f\n'%(legend, auc, acc, low))
+            legend, auc, acc, low = do_plot(predictions, answers, legend=metric,metric='auc', output_dir=output_dir)
+            f.write(f'%s   AUC %.4f, Accuracy %.4f, TPR@{fpr_cap}%%FPR of %.4f\n'%(legend, auc, acc, low))
 
     plt.semilogx()
     plt.semilogy()
@@ -75,17 +80,51 @@ def fig_fpr_tpr(all_output, output_dir):
     plt.legend(fontsize=8)
     plt.savefig(f"{output_dir}/auc.png")
 
-def fig_fpr_tpr_img(all_output, output_dir):
+def fig_fpr_tpr_img(all_output, output_dir, fpr_cap):
+    examples_seen = 0
+    fpr_cap = fpr_cap
+    
     print("output_dir", output_dir)
     method_metrics = defaultdict(lambda: defaultdict(list))
+    method_tokenwise_kl = defaultdict(list)
 
     for ex in all_output:
         label = ex["label"]
         for method, preds in ex["pred"].items():
+            
+            method_output_dir = f"{output_dir}/{method}"  # Ensure this is defined before writing
+            os.makedirs(method_output_dir, exist_ok=True)
+            
+            # For the first 50 examples
+            if examples_seen <= 50:
+                avg_kl = preds.get("Avg_kl_per_token")
+                full_renyi_05_token = preds.get("Full_renyi_05_Token")
+                avg_entropies = preds.get("avg_entropies")
+                
+                # Write the average kl_divergence for the full token string into a txt
+                if avg_kl is not None:
+                    kl_token_str = ", ".join([f"{v:.4f}" for v in avg_kl.tolist()])
+                    with open(f"{method_output_dir}/first_50_avg_kl.txt", "a") as f:
+                        f.write(f"For Example {examples_seen}, Average KL-DV of Tokens Across Perturbations for {method} method is: [{kl_token_str}]\n")
+                
+                # Write the renyo_05 entropy for the full token string into a txt
+                if full_renyi_05_token is not None:
+                    renyi_05_token_str = ", ".join([f"{v:.4f}" for v in full_renyi_05_token.tolist()])
+                    with open(f"{method_output_dir}/first_50_full_renyi05.txt", "a") as f:
+                        f.write(f"For Example {examples_seen}, The full renyi 0.5 token for {method} method is: [{renyi_05_token_str}]\n")
+                       
+                # Write the avg_entropies of tokens for the example original & Peterbation into txt
+                if avg_entropies is not None:
+                    avg_entropies_str = ", ".join([f"{k}: {v:.4f}" for k, v in avg_entropies.items()])
+                    with open(f"{method_output_dir}/first_50_aug_avg_entropies.txt", "a") as f:
+                        f.write(f"For Example {examples_seen}, average entropies for augmentations per token for {method} method is: [{avg_entropies_str}]\n")
+                    
             for metric, prediction in preds.items():
                 if ("raw" in metric) and ("clf" not in metric):
                     continue
                 method_metrics[method][metric].append((prediction, label))
+                
+        examples_seen += 1
 
     for method, metrics in method_metrics.items():
         method_output_dir = f"{output_dir}/{method}"
@@ -95,8 +134,10 @@ def fig_fpr_tpr_img(all_output, output_dir):
         with open(f"{method_output_dir}/auc.txt", "w") as f:
             for metric, data in metrics.items():
                 predictions, labels = zip(*data)
-                legend, auc, acc, low = do_plot(predictions, labels, legend=metric, metric='auc', output_dir=method_output_dir)
-                f.write(f'{legend}   AUC {auc:.4f}, Accuracy {acc:.4f}, TPR@5% FPR of {low:.4f}\n')
+                legend, auc, acc, low = do_plot(predictions, labels, legend=metric, metric='auc', output_dir=method_output_dir, fpr_cap=fpr_cap)
+                f.write(f'{legend}   AUC {auc:.4f}, Accuracy {acc:.4f}, TPR@{fpr_cap*100}% FPR of {low:.4f}\n')
+        
+        
 
         plt.semilogx()
         plt.semilogy()

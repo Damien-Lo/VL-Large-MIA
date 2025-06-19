@@ -65,8 +65,12 @@ def kl_divergence(p, log_p, log_q):
     kl_div = np.sum(p * (log_p - log_q))
     return kl_div
 
+def kl_divergence_per_token(p, log_p, log_q):
+    return np.sum(p*(log_p-log_q),axis=1)
+
 def get_img_metric(ppl, all_prob, p1_likelihood, entropies, mod_entropy, max_p, org_prob, gap_p, renyi_05, renyi_2, log_probs, aug1_prob, aug2_prob, aug3_prob, aug4_prob, mod_renyi_05, mod_renyi_2):
     pred = {}
+    
 
     kl_1 = kl_divergence(org_prob.cpu().numpy(), log_probs.cpu().numpy(), aug1_prob.cpu().numpy()).mean()
     kl_2 = kl_divergence(org_prob.cpu().numpy(), log_probs.cpu().numpy(), aug2_prob.cpu().numpy()).mean()
@@ -76,6 +80,33 @@ def get_img_metric(ppl, all_prob, p1_likelihood, entropies, mod_entropy, max_p, 
     pred['aug_kl'] = -statistics.mean([kl_1,kl_2,kl_3,kl_4])
 
     pred["ppl"] = ppl
+    
+    
+    # Only Returning Min-k of kl_divergence
+    kl_1_per_token = kl_divergence_per_token(org_prob.cpu().numpy(), log_probs.cpu().numpy(), aug1_prob.cpu().numpy())
+    kl_2_per_token = kl_divergence_per_token(org_prob.cpu().numpy(), log_probs.cpu().numpy(), aug2_prob.cpu().numpy())
+    kl_3_per_token = kl_divergence_per_token(org_prob.cpu().numpy(), log_probs.cpu().numpy(), aug3_prob.cpu().numpy())
+    kl_4_per_token = kl_divergence_per_token(org_prob.cpu().numpy(), log_probs.cpu().numpy(), aug4_prob.cpu().numpy())
+    
+    stacked_kl = np.stack([kl_1_per_token,kl_2_per_token,kl_3_per_token,kl_4_per_token])
+    
+    #1D Array of the average of each token across all perterbations
+    avg_kl_per_token = np.mean(stacked_kl,axis=0)
+    
+    # Save the kl_div for the token into pred
+    pred["Avg_kl_per_token"] = avg_kl_per_token
+    
+    # Save the renyi_05 entropy for the full token into pred
+    pred["Full_renyi_05_Token"] = renyi_05
+    
+    #Perform Min-K for Kl-divergence average per token
+    for ratio in [0, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]:
+        k_length = int(len(avg_kl_per_token)*ratio)
+        if k_length == 0:
+            k_length = 1
+        topk_prob = np.sort(avg_kl_per_token)[:k_length]
+        pred[f"Min_{ratio*100}% Kl_Div"] = -1* np.mean(topk_prob).item()    
+
 
     # mink
     for ratio in [0, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]:
@@ -118,6 +149,7 @@ def get_img_metric(ppl, all_prob, p1_likelihood, entropies, mod_entropy, max_p, 
         pred[f"Min_{ratio*100}% renyi_2"] = np.mean(topk_prob).item()
         topk_prob = np.sort(-np.array(max_p))[:k_length]
         pred[f"Min_{ratio*100}% renyi_inf"] = np.mean(topk_prob).item()
+        
 
     return pred
 

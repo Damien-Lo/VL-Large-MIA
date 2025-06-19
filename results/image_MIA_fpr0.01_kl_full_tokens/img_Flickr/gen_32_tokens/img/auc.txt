@@ -1,0 +1,2 @@
+aug_kl   AUC 0.6233, Accuracy 0.6017, TPR@1.0% FPR of 0.0000
+ppl   AUC 0.6680, Accuracy 0.6367, TPR@1.0% FPR of 0.0100

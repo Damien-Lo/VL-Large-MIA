@@ -56,6 +56,7 @@ def parse_args():
     parser.add_argument("--dataset", type=str, default='img_Flickr')
     parser.add_argument("--output_dir", type=str, default="image_MIA")
     parser.add_argument("--severity", type=int, default=6)
+    parser.add_argument("--fpr_cap", type=float, default=0.05)
     args = parser.parse_args()
     return args
 
@@ -81,8 +82,26 @@ def load_images(image_files):
         out.append(image)
     return out
 
+# build_max_entropy_image
+# Return: Torch Stack of Logit Values (new image) where each logit is from the highest entropy perterbation
+#         at that logit
+#
+# @param aug_with_max Array of integers for which perterbation has the highest entropy
+# @param all_logits_slices 2D array of logits of perterbation following aug_with_max augmention index order
+def build_max_entropy_image(aug_with_max,all_logits_slices):
+    output = []
+    
+    for i in range(len(aug_with_max)):
+        output.append(all_logits_slices[aug_with_max[i]][i])
+    
+    return torch.stack(output, dim=0)
+
+# Generate a response to the prompt and image
 def generate_text(model, image_processor, conv_mode, img, text, gpu_id, num_gen_token):
+    # Question: 'Describe this image concisely.'
     qs = text
+    
+    # Configure Default Image
     image_token_se = DEFAULT_IM_START_TOKEN + DEFAULT_IMAGE_TOKEN + DEFAULT_IM_END_TOKEN
     if IMAGE_PLACEHOLDER in qs:
         if model.config.mm_use_im_start_end:
@@ -95,6 +114,7 @@ def generate_text(model, image_processor, conv_mode, img, text, gpu_id, num_gen_
         else:
             qs = DEFAULT_IMAGE_TOKEN + "\n" + qs
 
+    # Load The conversation with the query
     conv = conv_templates[conv_mode].copy()
     conv.append_message(conv.roles[0], qs)
     conv.append_message(conv.roles[1], None)
@@ -108,9 +128,11 @@ def generate_text(model, image_processor, conv_mode, img, text, gpu_id, num_gen_
         model.config
     ).to(model.device, dtype=torch.float16)
 
+    # Tokenize Image Based On Prompt
     input_ids, prompt_chunks = tokenizer_image_token(prompt, tokenizer, IMAGE_TOKEN_INDEX, return_tensors="pt")
     input_ids = input_ids.unsqueeze(0).cuda(gpu_id)
 
+    # Generate Response based on set query and image conversation
     with torch.inference_mode():
         output_ids = model.generate(
             input_ids,
@@ -120,19 +142,25 @@ def generate_text(model, image_processor, conv_mode, img, text, gpu_id, num_gen_
             max_new_tokens=num_gen_token,
             use_cache=True,
         )
-
+    
+    # Token ID of Generated Response
     output_text = tokenizer.batch_decode(output_ids, skip_special_tokens=True)[0].strip()
 
     return output_text
 
+# Perform MIA Evaluation
 def evaluate_data(model, image_processor, conv_mode, test_data, text, gpu_id, num_gen_token):
     print(f"all data size: {len(test_data)}")
     all_output = []
     test_data = test_data
 
+    # For example in test_data
     for ex in tqdm(test_data): 
+        # Generate Ouput Text From Model
         description = generate_text(model, image_processor, conv_mode, ex['image'], text, gpu_id, num_gen_token)
         # description = ''
+        # 
+        
         new_ex = inference(model, image_processor, conv_mode, ex['image'], text, description, ex, gpu_id)
 
         all_output.append(new_ex)
@@ -154,6 +182,7 @@ def load_conversation_template(model_name):
         conv_mode = "llava_v0"
     return conv_mode
 
+# 
 def inference(model, vis_processor, conv_mode, img_path, text, description, ex, gpu_id):
     goal_parts = ['img','inst_desp','inst','desp']
     all_pred = {}
@@ -176,7 +205,10 @@ def inference(model, vis_processor, conv_mode, img_path, text, description, ex, 
     transform4 = ColorJitter(brightness=0.5, contrast=0.5, saturation=0.5, hue=0.5)
     aug4 = transform4(image)
     
+    aug_images = [aug1, aug2, aug3, aug4]
+    
     for part in goal_parts:
+        # Perform Attack on Each Type of Augmentation
         pred = {}
         metrics = mod_infer(model, vis_processor, conv_mode, image, text, description, gpu_id, part)
         metrics1 = mod_infer(model, vis_processor, conv_mode, aug1, text, description, gpu_id, part)
@@ -184,11 +216,37 @@ def inference(model, vis_processor, conv_mode, img_path, text, description, ex, 
         metrics3 = mod_infer(model, vis_processor, conv_mode, aug3, text, description, gpu_id, part)
         metrics4 = mod_infer(model, vis_processor, conv_mode, aug4, text, description, gpu_id, part)
 
-
         aug1_prob = metrics1['log_probs']
         aug2_prob = metrics2['log_probs']
         aug3_prob = metrics3['log_probs']
         aug4_prob = metrics4['log_probs']
+        
+        # Get Perterbation Entropies
+        org_entropies = metrics['entropies']       
+        aug1_entropies = metric1['entropies']
+        aug2_entropies = metric2['entropies']
+        aug3_entropies = metric3['entropies']
+        aug4_entropies = metric4['entropies']
+        
+        org_avg_entropies = np.mean(org_entropies)
+        aug1_avg_entropies = np.mean(aug1_entropies)
+        aug2_avg_entropies = np.mean(aug2_entropies)
+        aug3_avg_entropies = np.mean(aug3_entropies)
+        aug4_avg_entropies = np.mean(aug4_entropies)
+        avg_entropies = {'org': org_avg_entropies, 'aug1': aug1_avg_entropies, 'aug2': aug2_avg_entropies, 'aug3': aug3_avg_entropies, 'aug4':aug4_avg_entropies}
+        
+        
+        # #Check lengths
+        # if (len({len(aug1_entropies), len(aug2_entropies), len(aug3_entropies), len(aug4_entropies)}) != 1):
+        #     print("Entropy Arrays have different lengths")
+            
+        # # Build Max Entropy Image Logits
+        # else:
+        #     stacked_entropies = np.stack([aug1_entropies, aug2_entropies, aug3_entropies, aug4_entropies], axis=0)
+        #     aug_with_max = np.argmax(stacked_entropies, axis=0)
+        #     max_entropy_image = build_max_entropy_image(aug_with_max, aug_images)
+        
+        # # 
 
         ppl = metrics["ppl"]
         all_prob = metrics["all_prob"]
@@ -206,16 +264,18 @@ def inference(model, vis_processor, conv_mode, img_path, text, description, ex, 
         mod_renyi_2 = metrics["mod_renyi_2"]
 
         pred = get_img_metric(ppl, all_prob, p1_likelihood, entropies, mod_entropy, max_p, org_prob, gap_p, renyi_05, renyi_2, log_probs, aug1_prob, aug2_prob, aug3_prob, aug4_prob,mod_renyi_05, mod_renyi_2)
+        
+        pred['avg_entropies'] = avg_entropies
 
         all_pred[part] = pred
- 
+    #Format the example to add a "pred" key
     ex["pred"] = all_pred
 
     torch.cuda.empty_cache()
 
     return ex
 
-
+# Perform Inference Attack
 def mod_infer(model, image_processor, conv_mode, img, instruction, description, gpu_id, goal):
     device='cuda:{}'.format(gpu_id)
 
@@ -257,12 +317,13 @@ def mod_infer(model, image_processor, conv_mode, img, instruction, description, 
     
     descp_encoding = tokenizer(description, return_tensors="pt", add_special_tokens = False).to(device).input_ids
 
+    # Load Logits
     logits = outputs.logits
     goal_slice_dict = {
-        'img' : slice(len(prompt_chunks[0]),-len(prompt_chunks[-1])+1),
-        'inst_desp' : slice(-len(prompt_chunks[-1])+1,None),
-        'inst' : slice(-len(prompt_chunks[-1])+1,-descp_encoding.shape[1]),
-        'desp' : slice(-descp_encoding.shape[1],None)
+        'img' : slice(len(prompt_chunks[0]),-len(prompt_chunks[-1])+1), #Image Tokens
+        'inst_desp' : slice(-len(prompt_chunks[-1])+1,None),            # Instruction and Description Tokens
+        'inst' : slice(-len(prompt_chunks[-1])+1,-descp_encoding.shape[1]),     # Instruction Tokens
+        'desp' : slice(-descp_encoding.shape[1],None)                   # Description Tokens
         } 
 
     img_loss_slice = logits[0, goal_slice_dict['img'].start-1:goal_slice_dict['img'].stop-1, :]
@@ -302,10 +363,13 @@ if __name__ == '__main__':
     # Model
     disable_torch_init()
 
+    #Load Model
     model_name = get_model_name_from_path(args.model_path)
     tokenizer, model, image_processor, context_len = load_pretrained_model(
         args.model_path, args.model_base, model_name, gpu_id = args.gpu_id
     )
+    
+    # Load Coversation Mode
     conv_mode = load_conversation_template(model_name)
 
     if args.conv_mode is not None and conv_mode != args.conv_mode:
@@ -317,6 +381,7 @@ if __name__ == '__main__':
     else:
         args.conv_mode = conv_mode
 
+    # Load Dataset
     dataset = load_dataset("JaineLi/VL-MIA-image", dataset, split='train')
     data = convert_huggingface_data_to_list_dic(dataset)
 
@@ -327,6 +392,7 @@ if __name__ == '__main__':
 
     text = 'Describe this image concisely.'
 
+    # Perform MIA
     all_output = evaluate_data(model, image_processor, conv_mode, data, text, args.gpu_id, num_gen_token)
 
-    fig_fpr_tpr_img(all_output, output_dir)
+    fig_fpr_tpr_img(all_output, output_dir, fpr_cap=args.fpr_cap)
