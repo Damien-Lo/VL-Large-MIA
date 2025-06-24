@@ -153,6 +153,7 @@ def evaluate_data(model, image_processor, conv_mode, test_data, text, gpu_id, nu
     print(f"all data size: {len(test_data)}")
     all_output = []
     test_data = test_data
+    seen = 0
 
     # For example in test_data
     for ex in tqdm(test_data): 
@@ -164,6 +165,8 @@ def evaluate_data(model, image_processor, conv_mode, test_data, text, gpu_id, nu
         new_ex = inference(model, image_processor, conv_mode, ex['image'], text, description, ex, gpu_id)
 
         all_output.append(new_ex)
+        
+        seen += 1
 
     return all_output
 
@@ -210,11 +213,11 @@ def inference(model, vis_processor, conv_mode, img_path, text, description, ex, 
     for part in goal_parts:
         # Perform Attack on Each Type of Augmentation
         pred = {}
-        metrics = mod_infer(model, vis_processor, conv_mode, image, text, description, gpu_id, part)
-        metrics1 = mod_infer(model, vis_processor, conv_mode, aug1, text, description, gpu_id, part)
-        metrics2 = mod_infer(model, vis_processor, conv_mode, aug2, text, description, gpu_id, part)
-        metrics3 = mod_infer(model, vis_processor, conv_mode, aug3, text, description, gpu_id, part)
-        metrics4 = mod_infer(model, vis_processor, conv_mode, aug4, text, description, gpu_id, part)
+        org_cross_entro_per_token, metrics = mod_infer(model, vis_processor, conv_mode, image, text, description, gpu_id, part)
+        aug1_cross_entro_per_token, metrics1 = mod_infer(model, vis_processor, conv_mode, aug1, text, description, gpu_id, part)
+        aug2_cross_entro_per_token, metrics2 = mod_infer(model, vis_processor, conv_mode, aug2, text, description, gpu_id, part)
+        aug3_cross_entro_per_token, metrics3 = mod_infer(model, vis_processor, conv_mode, aug3, text, description, gpu_id, part)
+        aug4_cross_entro_per_token, metrics4 = mod_infer(model, vis_processor, conv_mode, aug4, text, description, gpu_id, part)
 
         aug1_prob = metrics1['log_probs']
         aug2_prob = metrics2['log_probs']
@@ -223,17 +226,18 @@ def inference(model, vis_processor, conv_mode, img_path, text, description, ex, 
         
         # Get Perterbation Entropies
         org_entropies = metrics['entropies']       
-        aug1_entropies = metric1['entropies']
-        aug2_entropies = metric2['entropies']
-        aug3_entropies = metric3['entropies']
-        aug4_entropies = metric4['entropies']
+        aug1_entropies = metrics1['entropies']
+        aug2_entropies = metrics2['entropies']
+        aug3_entropies = metrics3['entropies']
+        aug4_entropies = metrics4['entropies']
         
         org_avg_entropies = np.mean(org_entropies)
         aug1_avg_entropies = np.mean(aug1_entropies)
         aug2_avg_entropies = np.mean(aug2_entropies)
         aug3_avg_entropies = np.mean(aug3_entropies)
         aug4_avg_entropies = np.mean(aug4_entropies)
-        avg_entropies = {'org': org_avg_entropies, 'aug1': aug1_avg_entropies, 'aug2': aug2_avg_entropies, 'aug3': aug3_avg_entropies, 'aug4':aug4_avg_entropies}
+        avg_entropies_per_aug = {'org_avg_entro': org_avg_entropies, 'aug_resize_avg_entro': aug1_avg_entropies, 'aug_rotate_avg_entro': aug2_avg_entropies, 'aug_affine_avg_entro': aug3_avg_entropies, 'aug_cjitter_avg_entro':aug4_avg_entropies}
+        
         
         
         # #Check lengths
@@ -263,9 +267,11 @@ def inference(model, vis_processor, conv_mode, img_path, text, description, ex, 
         mod_renyi_05 = metrics["mod_renyi_05"]
         mod_renyi_2 = metrics["mod_renyi_2"]
 
-        pred = get_img_metric(ppl, all_prob, p1_likelihood, entropies, mod_entropy, max_p, org_prob, gap_p, renyi_05, renyi_2, log_probs, aug1_prob, aug2_prob, aug3_prob, aug4_prob,mod_renyi_05, mod_renyi_2)
+        pred = get_img_metric(ppl, all_prob, p1_likelihood, entropies, mod_entropy, max_p, org_prob, gap_p, renyi_05, renyi_2, log_probs, aug1_prob, aug2_prob, aug3_prob, aug4_prob,mod_renyi_05, mod_renyi_2,
+                                org_cross_entro_per_token, aug1_cross_entro_per_token, aug2_cross_entro_per_token, aug3_cross_entro_per_token, aug4_cross_entro_per_token)
         
-        pred['avg_entropies'] = avg_entropies
+        pred['avg_entropies_per_aug'] = avg_entropies_per_aug
+        
 
         all_pred[part] = pred
     #Format the example to add a "pred" key
@@ -316,6 +322,7 @@ def mod_infer(model, image_processor, conv_mode, img, instruction, description, 
         )
     
     descp_encoding = tokenizer(description, return_tensors="pt", add_special_tokens = False).to(device).input_ids
+    
 
     # Load Logits
     logits = outputs.logits
@@ -345,7 +352,14 @@ def mod_infer(model, image_processor, conv_mode, img, instruction, description, 
     probabilities = torch.nn.functional.softmax(logits_slice, dim=-1)
     log_probabilities = torch.nn.functional.log_softmax(logits_slice, dim=-1)
     
-    return get_meta_metrics(input_ids, probabilities, log_probabilities)
+    
+    # Token-wise Cross Entropy Loss
+    cross_entro_loss_per_token =[]
+    
+    for i in range(len(input_ids)):
+        cross_entro_loss_per_token.append(-log_probabilities[i][input_ids[i]])    
+        
+    return cross_entro_loss_per_token, get_meta_metrics(input_ids, probabilities, log_probabilities)
 
 # ========================================
 #             Model Initialization

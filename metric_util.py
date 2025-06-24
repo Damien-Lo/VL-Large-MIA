@@ -68,16 +68,58 @@ def kl_divergence(p, log_p, log_q):
 def kl_divergence_per_token(p, log_p, log_q):
     return np.sum(p*(log_p-log_q),axis=1)
 
-def get_img_metric(ppl, all_prob, p1_likelihood, entropies, mod_entropy, max_p, org_prob, gap_p, renyi_05, renyi_2, log_probs, aug1_prob, aug2_prob, aug3_prob, aug4_prob, mod_renyi_05, mod_renyi_2):
+def cross_entropy(p,log_q):
+    return -np.sum(p*log_q)
+
+def cross_entropy_per_token(p,log_q):
+    return -np.sum(p*log_q,axis=1)
+
+def get_img_metric(ppl, all_prob, p1_likelihood, entropies, mod_entropy, max_p, org_prob, gap_p, renyi_05, renyi_2, log_probs, aug1_prob, aug2_prob, aug3_prob, aug4_prob, mod_renyi_05, mod_renyi_2,
+                    org_cross_entro_per_token, aug1_cross_entro_per_token, aug2_cross_entro_per_token, aug3_cross_entro_per_token, aug4_cross_entro_per_token):
     pred = {}
     
-
+    # Convert Each Element to Float
+    org_cross_entro_per_token = np.array([t.item() for t in org_cross_entro_per_token])
+    aug1_cross_entro_per_token = np.array([t.item() for t in aug1_cross_entro_per_token])
+    aug2_cross_entro_per_token = np.array([t.item() for t in aug2_cross_entro_per_token])
+    aug3_cross_entro_per_token = np.array([t.item() for t in aug3_cross_entro_per_token])
+    aug4_cross_entro_per_token = np.array([t.item() for t in aug4_cross_entro_per_token])
+    
+    aug_cross_entro_per_token_list = [aug1_cross_entro_per_token,
+                                      aug2_cross_entro_per_token,
+                                      aug3_cross_entro_per_token,
+                                      aug4_cross_entro_per_token]
+    
+    # ======= Cross Entropy Loss ================
+    for ratio in [0, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1]:        
+        avg_entro_loss_per_aug = []
+        k_length = int(len(org_cross_entro_per_token)*ratio)
+        if k_length == 0:
+            k_length = 1
+        
+        for aug in aug_cross_entro_per_token_list:            
+            avg_entro_loss = np.sort(aug)[:k_length].mean()
+            avg_entro_loss_per_aug.append(avg_entro_loss)
+            
+        loss =  np.sort(org_cross_entro_per_token)[:k_length].mean() + np.mean(avg_entro_loss_per_aug)
+        
+        pred[f"Min_{ratio*100}% Cross_Entro_Augs"] = -1* loss
+           
+    
+    
+    
+    stacked_cross_entro = np.stack([aug1_cross_entro_per_token,aug2_cross_entro_per_token,aug3_cross_entro_per_token,aug4_cross_entro_per_token])
+    
+    
+    
+    # ======= KL Divergence ================
     kl_1 = kl_divergence(org_prob.cpu().numpy(), log_probs.cpu().numpy(), aug1_prob.cpu().numpy()).mean()
     kl_2 = kl_divergence(org_prob.cpu().numpy(), log_probs.cpu().numpy(), aug2_prob.cpu().numpy()).mean()
     kl_3 = kl_divergence(org_prob.cpu().numpy(), log_probs.cpu().numpy(), aug3_prob.cpu().numpy()).mean()
     kl_4 = kl_divergence(org_prob.cpu().numpy(), log_probs.cpu().numpy(), aug4_prob.cpu().numpy()).mean()
     
     pred['aug_kl'] = -statistics.mean([kl_1,kl_2,kl_3,kl_4])
+    pred['avg_kl_div_per_aug'] = {'org_avg_kl_div': 0, 'aug_resize_avg_kl_div': kl_1, 'aug_rotate_avg_kl_div': kl_2, 'aug_affine_avg_kl_div': kl_3, 'aug_cjitter_avg_kl_div':kl_4}
 
     pred["ppl"] = ppl
     
