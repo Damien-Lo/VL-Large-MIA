@@ -113,6 +113,8 @@ def get_img_metric(ppl, all_prob, p1_likelihood, entropies, mod_entropy, max_p, 
     
     
     # ======= KL Divergence ================
+    
+    # Calculate the kl_divergence for each perterbation compared to the original, averaged over all tokens
     kl_1 = kl_divergence(org_prob.cpu().numpy(), log_probs.cpu().numpy(), aug1_prob.cpu().numpy()).mean()
     kl_2 = kl_divergence(org_prob.cpu().numpy(), log_probs.cpu().numpy(), aug2_prob.cpu().numpy()).mean()
     kl_3 = kl_divergence(org_prob.cpu().numpy(), log_probs.cpu().numpy(), aug3_prob.cpu().numpy()).mean()
@@ -124,7 +126,7 @@ def get_img_metric(ppl, all_prob, p1_likelihood, entropies, mod_entropy, max_p, 
     pred["ppl"] = ppl
     
     
-    # Only Returning Min-k of kl_divergence
+    # Calculate the kl_divergence for each perterbation compared to the original per token
     kl_1_per_token = kl_divergence_per_token(org_prob.cpu().numpy(), log_probs.cpu().numpy(), aug1_prob.cpu().numpy())
     kl_2_per_token = kl_divergence_per_token(org_prob.cpu().numpy(), log_probs.cpu().numpy(), aug2_prob.cpu().numpy())
     kl_3_per_token = kl_divergence_per_token(org_prob.cpu().numpy(), log_probs.cpu().numpy(), aug3_prob.cpu().numpy())

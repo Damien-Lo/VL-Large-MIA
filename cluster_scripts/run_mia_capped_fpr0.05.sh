@@ -19,6 +19,5 @@ python /home/clo37/priv/VL-Large-MIA/run_with_img.py \
     --num_gen_token 32 \
     --dataset img_Flickr \
     --fpr_cap 0.05 \
-    --output_dir /home/clo37/priv/VL-Large-MIA/results/image_MIA_fpr0.05_w_additional_metrics
-
+    --output_dir /home/clo37/priv/VL-Large-MIA/results/image_MIA_2025_06_27_12-34
 

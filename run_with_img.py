@@ -187,7 +187,7 @@ def load_conversation_template(model_name):
 
 # 
 def inference(model, vis_processor, conv_mode, img_path, text, description, ex, gpu_id):
-    goal_parts = ['img','inst_desp','inst','desp']
+    goal_parts = ['img','inst_desp','inst','desp','img_inst_desp']
     all_pred = {}
 
     if isinstance(img_path, Image.Image):
@@ -330,7 +330,8 @@ def mod_infer(model, image_processor, conv_mode, img, instruction, description, 
         'img' : slice(len(prompt_chunks[0]),-len(prompt_chunks[-1])+1), #Image Tokens
         'inst_desp' : slice(-len(prompt_chunks[-1])+1,None),            # Instruction and Description Tokens
         'inst' : slice(-len(prompt_chunks[-1])+1,-descp_encoding.shape[1]),     # Instruction Tokens
-        'desp' : slice(-descp_encoding.shape[1],None)                   # Description Tokens
+        'desp' : slice(-descp_encoding.shape[1],None),                   # Description Tokens
+        'img_inst_desp' : slice(len(prompt_chunks[0]), None)
         } 
 
     img_loss_slice = logits[0, goal_slice_dict['img'].start-1:goal_slice_dict['img'].stop-1, :]
