@@ -92,21 +92,20 @@ def fig_fpr_tpr_img(all_output, output_dir, fpr_cap):
     
     print(f"All Output Size: {len(all_output)}")
     
-    out_dict = {}
+    examplewise_metrics_dict = {}
         
 
     
     for ex in all_output:
         label = ex["label"]
         membership = 'nonmember'
-        output_df = None
         
         if label == 1: membership = 'member'
         
         for method, preds in ex["pred"].items():
             
-            if method not in out_dict:
-                out_dict[method] = {"Membership":{},"Across Augs Avg KL-Div per Tkn List":{}, "Renyi 0.5 Entro per Tkn List":{}, "Across Tkn Avg Stnd Entro per Aug":{},"Across Tkn Avg KL-Div per Aug":{},}
+            if method not in examplewise_metrics_dict:
+                examplewise_metrics_dict[method] = {"Membership":{},"Across Augs Avg KL-Div per Tkn List":{}, "Renyi 0.5 Entro per Tkn List":{}, "Across Tkn Avg Stnd Entro per Aug":{},"Across Tkn Avg KL-Div per Aug":{}}
                 
             
             # method_output_dir = f"{output_dir}/{method}/"  # Ensure this is defined before writing
@@ -145,7 +144,7 @@ def fig_fpr_tpr_img(all_output, output_dir, fpr_cap):
             if avg_kl_div_per_aug is not None: row["Across Tkn Avg KL-Div per Aug"] = avg_kl_div_per_aug
             
             for metric in row:
-                out_dict[method][metric][examples_seen] = row[metric]
+                examplewise_metrics_dict[method][metric][examples_seen] = row[metric]
             
             # Old Redudent Log Scripts
             '''
@@ -178,28 +177,53 @@ def fig_fpr_tpr_img(all_output, output_dir, fpr_cap):
                 
         examples_seen += 1
     
-    with open(f"{output_dir}/all_additional_metrics.json", "w") as f:
-        json.dump(out_dict,f)
+    with open(f"{output_dir}/examplewise_additional_metrics.json", "w") as f:
+        json.dump(examplewise_metrics_dict,f)
         
         
     # Metrics to Skip AUC Calculations as they are not doable
-    skipped_auc_metrics = ['Avg_kl_per_token','Full_renyi_05_Token','avg_kl_div_per_aug','avg_entropies_per_aug']
+    partwise_metrics_dict = {}
+    skipped_auc_metrics = ['Avg_kl_per_token','Full_renyi_05_Token','avg_kl_div_per_aug','avg_entropies_per_aug','Max_kl_per_token', 'All_ver_kl_per_token']
                 
-
     for method, metrics in method_metrics.items():
-        method_output_dir = f"{output_dir}/{method}"
-        os.makedirs(method_output_dir, exist_ok=True)
+        if method not in partwise_metrics_dict:
+                partwise_metrics_dict[method] = {}
+        
+        for metric, data in metrics.items():
+            if metric in skipped_auc_metrics:
+                continue
+            predictions, labels = zip(*data)
+            legend, auc, acc, low = do_plot(predictions, labels, legend=metric, metric='auc', output_dir=None, fpr_cap=fpr_cap)
+            
+            partwise_metrics_dict[method][legend] = {'AUC':auc, 'Accuracy': acc, f'TPR@{fpr_cap*100}% FPR': low}
+        
+        
+        
+        plt.figure(figsize=(4,3))
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        # method_output_dir = f"{output_dir}/{method}"
+        # os.makedirs(method_output_dir, exist_ok=True)
         
 
-        plt.figure(figsize=(4,3))
-        with open(f"{method_output_dir}/auc.txt", "w") as f:
-            for metric, data in metrics.items():
-                if metric in skipped_auc_metrics:
-                    continue
+        
+        # with open(f"{method_output_dir}/auc.txt", "w") as f:
+        #     for metric, data in metrics.items():
+        #         if metric in skipped_auc_metrics:
+        #             continue
                 
-                predictions, labels = zip(*data)
-                legend, auc, acc, low = do_plot(predictions, labels, legend=metric, metric='auc', output_dir=method_output_dir, fpr_cap=fpr_cap)
-                f.write(f'{legend}   AUC {auc:.4f}, Accuracy {acc:.4f}, TPR@{fpr_cap*100}% FPR of {low:.4f}\n')
+        #         predictions, labels = zip(*data)
+        #         legend, auc, acc, low = do_plot(predictions, labels, legend=metric, metric='auc', output_dir=method_output_dir, fpr_cap=fpr_cap)
+        #         f.write(f'{legend}   AUC {auc:.4f}, Accuracy {acc:.4f}, TPR@{fpr_cap*100}% FPR of {low:.4f}\n')
         
         
 
@@ -214,6 +238,9 @@ def fig_fpr_tpr_img(all_output, output_dir, fpr_cap):
         plt.legend(fontsize=8)
         plt.savefig(f"{method_output_dir}/auc.png")
         plt.close()
+        
+    with open(f"{output_dir}/partwise_metrics.json", "w") as f:
+        json.dump(partwise_metrics_dict,f)
 
 
 def load_jsonl(input_path):

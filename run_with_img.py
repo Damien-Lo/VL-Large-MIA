@@ -37,6 +37,8 @@ from tqdm import tqdm
 import numpy as np
 from datasets import load_dataset
 from eval import *
+import pickle
+
 
 import sys
 # sys.path.insert(0, '../')
@@ -57,6 +59,7 @@ def parse_args():
     parser.add_argument("--output_dir", type=str, default="image_MIA")
     parser.add_argument("--severity", type=int, default=6)
     parser.add_argument("--fpr_cap", type=float, default=0.05)
+    parser.add_argument("--vers_per_aug", type=int, default=5)
     args = parser.parse_args()
     return args
 
@@ -157,6 +160,9 @@ def evaluate_data(model, image_processor, conv_mode, test_data, text, gpu_id, nu
 
     # For example in test_data
     for ex in tqdm(test_data): 
+        # !!!!!!!!!!!!!!!!!!!!!!!!!!! TEMP BREAK !!!!!!!!!!!!!!!!!!!!!!!!!!!
+        # if seen >= 5:
+        #     sys.exit()
         # Generate Ouput Text From Model
         description = generate_text(model, image_processor, conv_mode, ex['image'], text, gpu_id, num_gen_token)
         # description = ''
@@ -194,49 +200,108 @@ def inference(model, vis_processor, conv_mode, img_path, text, description, ex, 
         image = img_path.convert('RGB')  
     else:
         image = Image.open(img_path).convert('RGB')  
-
+        
+    
     # Define the transformations
     transform1 = RandomResizedCrop(size=(256, 256))
-    aug1 = transform1(image)
-
     transform2 = RandomRotation(degrees=45)
-    aug2 = transform2(image)
-
     transform3 = RandomAffine(degrees=30, translate=(0.1, 0.1), scale=(0.75, 1.25))
-    aug3 = transform3(image)
-
     transform4 = ColorJitter(brightness=0.5, contrast=0.5, saturation=0.5, hue=0.5)
-    aug4 = transform4(image)
+    transformations = {
+        'aug_resize': transform1,
+        'aug_rotate': transform2,
+        'aug_affine': transform3,
+        'aug_cjitter': transform4
+    }
+
+    # Create Multiple Versions of Transformed Image for all transformed images
+    augmented_images = [] # Row: augmentations, Col: Versions
     
-    aug_images = [aug1, aug2, aug3, aug4]
+    for transformation in transformations:
+        versions = []
+        for i in range(args.vers_per_aug):
+            versions.append(transformations[transformation](image))
+        augmented_images.append(versions)
+        
+    avg_entropies_per_aug = {'org_avg_entro': None, 
+                             'aug_resize_avg_entro': None, 
+                             'aug_rotate_avg_entro': None, 
+                             'aug_affine_avg_entro': None, 
+                             'aug_cjitter_avg_entro':None}
+    avg_entropies_per_aug_keys = list(avg_entropies_per_aug.keys())
+    transformation_keys = list(transformations.keys())
+        
     
     for part in goal_parts:
-        # Perform Attack on Each Type of Augmentation
-        pred = {}
+        
+        
+        # ORIGINAL IMAGE
         org_cross_entro_per_token, metrics = mod_infer(model, vis_processor, conv_mode, image, text, description, gpu_id, part)
-        aug1_cross_entro_per_token, metrics1 = mod_infer(model, vis_processor, conv_mode, aug1, text, description, gpu_id, part)
-        aug2_cross_entro_per_token, metrics2 = mod_infer(model, vis_processor, conv_mode, aug2, text, description, gpu_id, part)
-        aug3_cross_entro_per_token, metrics3 = mod_infer(model, vis_processor, conv_mode, aug3, text, description, gpu_id, part)
-        aug4_cross_entro_per_token, metrics4 = mod_infer(model, vis_processor, conv_mode, aug4, text, description, gpu_id, part)
+        org_cross_entro_per_token = np.array([t.item() for t in org_cross_entro_per_token])
+        avg_entropies_per_aug['org_avg_entro'] = np.mean(metrics['entropies'])
+        
+        
+        
+        
+        
+        # AUGMENTATION VERSIONS
+        augmented_images_CE_per_token = [] #[aug1[avg_CE_per_token],aug2[]]
+        augmented_image_probs = []      #[aug1[ver1[2Darraylogprobs],ver2[]],aug2[]]
+        
+        for aug in range(len(augmented_images)):
+            CEs_per_token_per_version = [] # 2D Array witn rows as versions and columns as CE per token (floats)
+            probs = [] # 3D Array of log probs for each version in an augmentation
+            aug_avg_entropies = [] # 1D array of the average entropies for each version
+            for version in range(len(augmented_images[aug])):
+                image = augmented_images[aug][version]
+                
+                CE_per_token, metrics = mod_infer(model, vis_processor, conv_mode, image, text, description, gpu_id, part)
+                CEs_per_token_per_version.append(np.array([t.item() for t in CE_per_token])) # Convert Each Entropy per token into float, append the whole 1D array into CEs
+                probs.append(metrics['log_probs'])
+                aug_avg_entropies.append(np.mean(metrics['entropies']))
+                
+            # Define the average entropy across each augmentation across all versions of that augmentation
+            avg_entropies_per_aug[avg_entropies_per_aug_keys[aug]] = np.mean(aug_avg_entropies)
+            
+            augmented_image_probs.append(probs)
+            # Tokenwise average CE across all versions per augmentation
+            augmented_images_CE_per_token.append(np.mean(CEs_per_token_per_version,axis=0))
+            
+            
+            
+                
+                
+        
+        
+        
+        # # Perform Attack on Each Type of Augmentation
+        # pred = {}
+        # org_cross_entro_per_token, metrics = mod_infer(model, vis_processor, conv_mode, image, text, description, gpu_id, part)
+        # aug1_cross_entro_per_token, metrics1 = mod_infer(model, vis_processor, conv_mode, aug1, text, description, gpu_id, part)
+        # aug2_cross_entro_per_token, metrics2 = mod_infer(model, vis_processor, conv_mode, aug2, text, description, gpu_id, part)
+        # aug3_cross_entro_per_token, metrics3 = mod_infer(model, vis_processor, conv_mode, aug3, text, description, gpu_id, part)
+        # aug4_cross_entro_per_token, metrics4 = mod_infer(model, vis_processor, conv_mode, aug4, text, description, gpu_id, part)
 
-        aug1_prob = metrics1['log_probs']
-        aug2_prob = metrics2['log_probs']
-        aug3_prob = metrics3['log_probs']
-        aug4_prob = metrics4['log_probs']
+        # aug1_prob = metrics1['log_probs']
+        # aug2_prob = metrics2['log_probs']
+        # aug3_prob = metrics3['log_probs']
+        # aug4_prob = metrics4['log_probs']
         
-        # Get Perterbation Entropies
-        org_entropies = metrics['entropies']       
-        aug1_entropies = metrics1['entropies']
-        aug2_entropies = metrics2['entropies']
-        aug3_entropies = metrics3['entropies']
-        aug4_entropies = metrics4['entropies']
         
-        org_avg_entropies = np.mean(org_entropies)
-        aug1_avg_entropies = np.mean(aug1_entropies)
-        aug2_avg_entropies = np.mean(aug2_entropies)
-        aug3_avg_entropies = np.mean(aug3_entropies)
-        aug4_avg_entropies = np.mean(aug4_entropies)
-        avg_entropies_per_aug = {'org_avg_entro': org_avg_entropies, 'aug_resize_avg_entro': aug1_avg_entropies, 'aug_rotate_avg_entro': aug2_avg_entropies, 'aug_affine_avg_entro': aug3_avg_entropies, 'aug_cjitter_avg_entro':aug4_avg_entropies}
+        
+        # # Get Perterbation Entropies
+        # org_entropies = metrics['entropies']       
+        # aug1_entropies = metrics1['entropies']
+        # aug2_entropies = metrics2['entropies']
+        # aug3_entropies = metrics3['entropies']
+        # aug4_entropies = metrics4['entropies']
+        
+        # org_avg_entropies = np.mean(org_entropies)
+        # aug1_avg_entropies = np.mean(aug1_entropies)
+        # aug2_avg_entropies = np.mean(aug2_entropies)
+        # aug3_avg_entropies = np.mean(aug3_entropies)
+        # aug4_avg_entropies = np.mean(aug4_entropies)
+        # avg_entropies_per_aug = {'org_avg_entro': org_avg_entropies, 'aug_resize_avg_entro': aug1_avg_entropies, 'aug_rotate_avg_entro': aug2_avg_entropies, 'aug_affine_avg_entro': aug3_avg_entropies, 'aug_cjitter_avg_entro':aug4_avg_entropies}
         
         
         
@@ -267,8 +332,8 @@ def inference(model, vis_processor, conv_mode, img_path, text, description, ex, 
         mod_renyi_05 = metrics["mod_renyi_05"]
         mod_renyi_2 = metrics["mod_renyi_2"]
 
-        pred = get_img_metric(ppl, all_prob, p1_likelihood, entropies, mod_entropy, max_p, org_prob, gap_p, renyi_05, renyi_2, log_probs, aug1_prob, aug2_prob, aug3_prob, aug4_prob,mod_renyi_05, mod_renyi_2,
-                                org_cross_entro_per_token, aug1_cross_entro_per_token, aug2_cross_entro_per_token, aug3_cross_entro_per_token, aug4_cross_entro_per_token)
+        pred = get_img_metric(ppl, all_prob, p1_likelihood, entropies, mod_entropy, max_p, org_prob, gap_p, renyi_05, renyi_2, log_probs, mod_renyi_05, mod_renyi_2,
+                                org_cross_entro_per_token, np.array(augmented_images_CE_per_token), augmented_image_probs,transformation_keys)
         
         pred['avg_entropies_per_aug'] = avg_entropies_per_aug
         
@@ -333,6 +398,8 @@ def mod_infer(model, image_processor, conv_mode, img, instruction, description, 
         'desp' : slice(-descp_encoding.shape[1],None),                   # Description Tokens
         'img_inst_desp' : slice(len(prompt_chunks[0]), None)
         } 
+    
+    # TODO Return the prompt chunks token splits to diffrentiate which tokens belong to which part
 
     img_loss_slice = logits[0, goal_slice_dict['img'].start-1:goal_slice_dict['img'].stop-1, :]
     img_target_np = torch.nn.functional.softmax(img_loss_slice, dim=-1).cpu().numpy()
@@ -409,5 +476,11 @@ if __name__ == '__main__':
 
     # Perform MIA
     all_output = evaluate_data(model, image_processor, conv_mode, data, text, args.gpu_id, num_gen_token)
+    
+    # Export Output
+    all_output_path = f'{output_dir}/all_output.pkl'
+    with open(all_output_path, "wb") as f:
+        pickle.dump(all_output, f) 
 
+    print(f"Output Directory is: {output_dir}")
     fig_fpr_tpr_img(all_output, output_dir, fpr_cap=args.fpr_cap)

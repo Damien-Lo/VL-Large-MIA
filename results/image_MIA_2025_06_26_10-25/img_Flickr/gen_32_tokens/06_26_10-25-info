@@ -8,4 +8,4 @@ PARAMETERS
     --num_gen_token 32 \
     --dataset img_Flickr \
     --fpr_cap 0.05 \
-    --output_dir /home/clo37/priv/VL-Large-MIA/results/image_MIA_2025_06_27_12-34
+    --output_dir /home/clo37/priv/VL-Large-MIA/results/image_MIA_2025_06_26_10-25

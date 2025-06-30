@@ -1,0 +1,11 @@
+GOAL
+Added Max per token KL_Div along with all previous metrics
+
+
+
+PARAMETERS
+    --gpu_id 0 \
+    --num_gen_token 32 \
+    --dataset img_Flickr \
+    --fpr_cap 0.05 \
+    --output_dir /home/clo37/priv/VL-Large-MIA/results/image_MIA_2025_06_26_16:37
