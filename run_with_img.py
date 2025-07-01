@@ -60,6 +60,7 @@ def parse_args():
     parser.add_argument("--severity", type=int, default=6)
     parser.add_argument("--fpr_cap", type=float, default=0.05)
     parser.add_argument("--vers_per_aug", type=int, default=5)
+    parser.add_argument("--test_run", action="store_true", help="Run a quick test")
     args = parser.parse_args()
     return args
 
@@ -152,17 +153,19 @@ def generate_text(model, image_processor, conv_mode, img, text, gpu_id, num_gen_
     return output_text
 
 # Perform MIA Evaluation
-def evaluate_data(model, image_processor, conv_mode, test_data, text, gpu_id, num_gen_token):
+def evaluate_data(model, image_processor, conv_mode, test_data, text, gpu_id, num_gen_token, test_run=False):
     print(f"all data size: {len(test_data)}")
+    if test_run:
+        print("This is a test run")
     all_output = []
     test_data = test_data
     seen = 0
 
     # For example in test_data
     for ex in tqdm(test_data): 
-        # !!!!!!!!!!!!!!!!!!!!!!!!!!! TEMP BREAK !!!!!!!!!!!!!!!!!!!!!!!!!!!
-        # if seen >= 5:
-        #     sys.exit()
+        if test_run and seen>=5:
+            print("Test Run Completed Breaking Out of Test Run")
+            break
         # Generate Ouput Text From Model
         description = generate_text(model, image_processor, conv_mode, ex['image'], text, gpu_id, num_gen_token)
         # description = ''
@@ -236,7 +239,7 @@ def inference(model, vis_processor, conv_mode, img_path, text, description, ex, 
         
         
         # ORIGINAL IMAGE
-        org_cross_entro_per_token, metrics = mod_infer(model, vis_processor, conv_mode, image, text, description, gpu_id, part)
+        org_cross_entro_per_token, metrics, token_regions = mod_infer(model, vis_processor, conv_mode, image, text, description, gpu_id, part)
         org_cross_entro_per_token = np.array([t.item() for t in org_cross_entro_per_token])
         avg_entropies_per_aug['org_avg_entro'] = np.mean(metrics['entropies'])
         
@@ -255,13 +258,13 @@ def inference(model, vis_processor, conv_mode, img_path, text, description, ex, 
             for version in range(len(augmented_images[aug])):
                 image = augmented_images[aug][version]
                 
-                CE_per_token, metrics = mod_infer(model, vis_processor, conv_mode, image, text, description, gpu_id, part)
+                CE_per_token, metrics, token_regions = mod_infer(model, vis_processor, conv_mode, image, text, description, gpu_id, part)
                 CEs_per_token_per_version.append(np.array([t.item() for t in CE_per_token])) # Convert Each Entropy per token into float, append the whole 1D array into CEs
                 probs.append(metrics['log_probs'])
                 aug_avg_entropies.append(np.mean(metrics['entropies']))
                 
             # Define the average entropy across each augmentation across all versions of that augmentation
-            avg_entropies_per_aug[avg_entropies_per_aug_keys[aug]] = np.mean(aug_avg_entropies)
+            avg_entropies_per_aug[avg_entropies_per_aug_keys[aug+1]] = np.mean(aug_avg_entropies)
             
             augmented_image_probs.append(probs)
             # Tokenwise average CE across all versions per augmentation
@@ -336,6 +339,7 @@ def inference(model, vis_processor, conv_mode, img_path, text, description, ex, 
                                 org_cross_entro_per_token, np.array(augmented_images_CE_per_token), augmented_image_probs,transformation_keys)
         
         pred['avg_entropies_per_aug'] = avg_entropies_per_aug
+        pred['token_regions'] = token_regions
         
 
         all_pred[part] = pred
@@ -399,7 +403,37 @@ def mod_infer(model, image_processor, conv_mode, img, instruction, description, 
         'img_inst_desp' : slice(len(prompt_chunks[0]), None)
         } 
     
-    # TODO Return the prompt chunks token splits to diffrentiate which tokens belong to which part
+    
+    # Total sequence length
+    seq_len = logits.shape[1]
+
+    # Initialize all token positions as 'other'
+    token_regions = ['other'] * seq_len
+
+    # Define regions with slices
+    slice_labels = {
+        'img': slice(len(prompt_chunks[0]), -len(prompt_chunks[-1]) + 1),
+        'inst': slice(-len(prompt_chunks[-1]) + 1, -descp_encoding.shape[1]),
+        'desp': slice(-descp_encoding.shape[1], None),
+    }
+
+    # Convert slices to actual indices and assign labels
+    for region, sl in slice_labels.items():
+        start = sl.start if sl.start is not None else 0
+        stop = sl.stop if sl.stop is not None else seq_len
+
+        # Convert negative indices to positive
+        if start < 0:
+            start += seq_len
+        if stop < 0:
+            stop += seq_len
+
+        # Assign labels
+        for i in range(start, stop):
+            token_regions[i] = region
+            
+    token_regions = token_regions[goal_slice_dict[goal]]
+    
 
     img_loss_slice = logits[0, goal_slice_dict['img'].start-1:goal_slice_dict['img'].stop-1, :]
     img_target_np = torch.nn.functional.softmax(img_loss_slice, dim=-1).cpu().numpy()
@@ -420,6 +454,8 @@ def mod_infer(model, image_processor, conv_mode, img, instruction, description, 
     probabilities = torch.nn.functional.softmax(logits_slice, dim=-1)
     log_probabilities = torch.nn.functional.log_softmax(logits_slice, dim=-1)
     
+    # Return the prompt chunks token splits to diffrentiate which tokens belong to which part
+
     
     # Token-wise Cross Entropy Loss
     cross_entro_loss_per_token =[]
@@ -427,7 +463,7 @@ def mod_infer(model, image_processor, conv_mode, img, instruction, description, 
     for i in range(len(input_ids)):
         cross_entro_loss_per_token.append(-log_probabilities[i][input_ids[i]])    
         
-    return cross_entro_loss_per_token, get_meta_metrics(input_ids, probabilities, log_probabilities)
+    return cross_entro_loss_per_token, get_meta_metrics(input_ids, probabilities, log_probabilities), token_regions
 
 # ========================================
 #             Model Initialization
@@ -475,7 +511,7 @@ if __name__ == '__main__':
     text = 'Describe this image concisely.'
 
     # Perform MIA
-    all_output = evaluate_data(model, image_processor, conv_mode, data, text, args.gpu_id, num_gen_token)
+    all_output = evaluate_data(model, image_processor, conv_mode, data, text, args.gpu_id, num_gen_token, test_run=args.test_run)
     
     # Export Output
     all_output_path = f'{output_dir}/all_output.pkl'

@@ -1,6 +1,6 @@
 #!/bin/bash
-#SBATCH --job-name=run_mia_vlm_large_img_fpr0.05_full_two
-#SBATCH --output=out_run_mia_vlm_large_img_fpr0.05_full_two.log
+#SBATCH --job-name=testrun_mia
+#SBATCH --output=out_testrun_mia.log
 #SBATCH --gres=gpu:1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
@@ -19,4 +19,6 @@ python /home/clo37/priv/VL-Large-MIA/run_with_img.py \
     --num_gen_token 32 \
     --dataset img_Flickr \
     --fpr_cap 0.05 \
-    --output_dir /home/clo37/priv/VL-Large-MIA/results/image_MIA_2025_06_30_14:03 \
+    --output_dir /home/clo37/priv/VL-Large-MIA/results/image_MIA_TEST \
+    --test_run
+

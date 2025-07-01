@@ -202,8 +202,7 @@ def get_img_metric(ppl, all_prob, p1_likelihood, entropies, mod_entropy, max_p, 
     # # Save the kl_div for the token into pred
     # pred["Avg_kl_per_token"] = avg_kl_per_token
     
-    # # Save the renyi_05 entropy for the full token into pred
-    # pred["Full_renyi_05_Token"] = renyi_05
+
     
     # #Perform Min-K for Kl-divergence average per token
     # for ratio in [0, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]:
@@ -231,6 +230,9 @@ def get_img_metric(ppl, all_prob, p1_likelihood, entropies, mod_entropy, max_p, 
     pred["Modified_renyi_2"] = np.nanmean(mod_renyi_2).item()
 
     pred["Max_Prob_Gap"] = -np.mean(gap_p).item()
+    
+    # Save the renyi_05 entropy for the full token into pred
+    pred["Full_renyi_05_Token"] = renyi_05
 
     for ratio in [0, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1]:
         k_length = int(len(renyi_05)*ratio)
