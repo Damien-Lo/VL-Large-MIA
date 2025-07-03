@@ -35,7 +35,6 @@ def do_plot(prediction, answers, sweep_fn=sweep, metric='auc', legend="", output
     Generate the ROC curves by using ntest models as test models and the rest to train.
     """
     fpr_cap = fpr_cap
-    
     fpr, tpr, auc, acc = sweep_fn(np.array(prediction), np.array(answers, dtype=bool))
 
 
@@ -85,55 +84,47 @@ def fig_fpr_tpr(all_output, output_dir, fpr_cap):
 def fig_fpr_tpr_img(all_output, output_dir, fpr_cap):
     examples_seen = 0
     fpr_cap = fpr_cap
-    
-    print("output_dir", output_dir)
-    method_metrics = defaultdict(lambda: defaultdict(list))
-    method_tokenwise_kl = defaultdict(list)
-    
     print(f"All Output Size: {len(all_output)}")
+    print("output_dir", output_dir)
     
+    # Output Dictionaries 
+    partwise_metrics_dict = {}
+    method_metrics = defaultdict(lambda: defaultdict(list))
     examplewise_metrics_dict = {}
-        
-
     
+    # Metrics Not Appropiate for AUC
+    skipped_auc_metrics = ['Avg_non_normalised_kl_per_token','Full_renyi_05_Token','avg_kl_div_per_aug',
+                           'avg_entropies_per_aug','Max_kl_per_token', 'All_ver_kl_per_token','token_regions',
+                           'Avg_renyi_05_kl_per_token','Avg_renyi_1_kl_per_token','Avg_renyi_2_kl_per_token',
+                           'Avg_renyi_inf_kl_per_token']
+    
+    # =======================================================================================================
+    # PER EXAMPLE METRICS (Token Distributions, Per Token Values) (Not Sutable for AUC)
+    # ========================================================================================================
     for ex in all_output:
         label = ex["label"]
-        membership = 'nonmember'
         
-        if label == 1: membership = 'member'
-        
+        # For each method/part, store seperatly in examplewise_metrics_dict
         for method, preds in ex["pred"].items():
-            
             if method not in examplewise_metrics_dict:
                 examplewise_metrics_dict[method] = {"Membership":{},"Across Augs Avg KL-Div per Tkn List":{}, "Renyi 0.5 Entro per Tkn List":{}, "Across Tkn Avg Stnd Entro per Aug":{},"Across Tkn Avg KL-Div per Aug":{}, "Token Sequence Label": {}}
                 
-            
-            # method_output_dir = f"{output_dir}/{method}/"  # Ensure this is defined before writing
-            # os.makedirs(method_output_dir, exist_ok=True)
-            
-            
-            # ========================Additional Metrics========================================
-            
-            
+            # Creating Row For said example
             row = {"Membership": label,"Across Augs Avg KL-Div per Tkn List": np.nan, "Renyi 0.5 Entro per Tkn List":np.nan, "Across Tkn Avg Stnd Entro per Aug":np.nan, "Across Tkn Avg KL-Div per Aug":np.nan, "Token Sequence Label":np.nan}
             
-            avg_kl = preds.get("Avg_kl_per_token") #Python List []
             full_renyi_05_token = preds.get("Full_renyi_05_Token") # Python List []
             avg_entropies_per_aug = preds.get("avg_entropies_per_aug") # Python Dict {'org_avg_entro': int, 'aug1_avg_entro': int, 'aug2_avg_entro': int,.....}
-            avg_kl_div_per_aug = preds.get("avg_kl_div_per_aug") # Python Dict {'org_avg_kl_div': 0, 'aug1_avg_kl_div': int, 'aug2_avg_kl_div': int,.....}
             token_regions = preds.get("token_regions")
             
+            # TODO: Add all the renyi token KL distribution metrics
             
             # Formatting for JSON Dump
-            if isinstance(avg_kl, np.ndarray):
-                avg_kl = avg_kl.tolist()
+            if isinstance(non_norm_avg_kl, np.ndarray):
+                non_norm_avg_kl = non_norm_avg_kl.tolist()
             if isinstance(full_renyi_05_token, np.ndarray):
                 full_renyi_05_token = full_renyi_05_token.tolist()
             avg_entropies_per_aug = {k: float(v) for k, v in avg_entropies_per_aug.items()}
-            avg_kl_div_per_aug = {k: float(v) for k, v in avg_kl_div_per_aug.items()}
             
-            # Log the Average KL Diveregence Per Token List Across all Examples
-            if avg_kl is not None: row["Across Augs Avg KL-Div per Tkn List"] = avg_kl
             
             # Log the Full Renyi 0.5 Entropy Per Token List Per Example 
             if full_renyi_05_token is not None: row["Renyi 0.5 Entro per Tkn List"] = full_renyi_05_token
@@ -141,54 +132,68 @@ def fig_fpr_tpr_img(all_output, output_dir, fpr_cap):
             # Log the Average Standard Entropy Per Augmentation Per Example
             if avg_entropies_per_aug is not None: row["Across Tkn Avg Stnd Entro per Aug"] = avg_entropies_per_aug
             
-            # Log the Average KL Divergence Per Augmentation Per Example
-            if avg_kl_div_per_aug is not None: row["Across Tkn Avg KL-Div per Aug"] = avg_kl_div_per_aug
-            
             # Log the label (img, inst, desp) the token came from
             if token_regions is not None: row['Token Sequence Label'] = token_regions
             
-            for metric in row:
-                examplewise_metrics_dict[method][metric][examples_seen] = row[metric]
-            
-            # Old Redudent Log Scripts
-            '''
-            # Write the average kl_divergence for the full token string into a txt
-            if avg_kl is not None:
-                kl_token_str = ", ".join([f"{v:.4f}" for v in avg_kl.tolist()])
-                with open(f"{method_output_dir}/{membership}_first_50_avg_kl.txt", "a") as f:
-                    f.write(f"For Example {examples_seen}, Average KL-DV of Tokens Across Perturbations for {method} method is: [{kl_token_str}]\n")
-            
-            # Write the renyo_05 entropy for the full token string into a txt
-            if full_renyi_05_token is not None:
-                renyi_05_token_str = ", ".join([f"{v:.4f}" for v in full_renyi_05_token])
-                with open(f"{method_output_dir}/{membership}_first_50_full_renyi05.txt", "a") as f:
-                    f.write(f"For Example {examples_seen}, The full renyi 0.5 token for {method} method is: [{renyi_05_token_str}]\n")
-                    
-            # Write the avg_entropies of tokens for the example original & Peterbation into txt
-            if avg_entropies is not None:
-                avg_entropies_str = ", ".join([f"{k}: {v:.4f}" for k, v in avg_entropies.items()])
-                with open(f"{method_output_dir}/{membership}_avg_kl_div_per_aug.txt", "a") as f:
-                    f.write(f"For Example {examples_seen}, average kl-divergence for augmentations across all token for {method} method is: [{avg_entropies_str}]\n")
-            '''
-            
+                     
             
             # =====================================================================
                     
             for metric, prediction in preds.items():
                 if ("raw" in metric) and ("clf" not in metric):
                     continue
+                
+                # Handle KL-Divergence results seperatly
+                if metric =='kl_divergence_results':
+                    continue
+                
                 method_metrics[method][metric].append((prediction, label))
+                
+            
+            # Handle All KL-Divergence Results
+            all_normalised_kl_divergence_values_dict = preds.get("kl_divergence_results")    
+                #Include metrics (non_norm, renyi_05, renyi_1, renyi_2, renyi_inf):
+                # For each of these metrics, it includes: (augs_kl_divs_per_token, augs_kl_div_sum, aug_kl_divs_avg_dict,
+                #                                       "Min_{ratio*100}% of Avg Kl_Div", "Min_{ratio*100}% of Max Kl_Div")
+                
+            for normaliser, results in all_normalised_kl_divergence_values_dict.items():
+                # Variable Description: For every token, the average kl_divergence value across all augmentations
+                augs_avg_kl_divs_per_token = np.mean(results['augs_kl_divs_per_token'],axis=0)
+                if isinstance(augs_avg_kl_divs_per_token, np.ndarray):
+                    augs_avg_kl_divs_per_token = augs_avg_kl_divs_per_token.tolist()
+                    row[f'{normaliser}_normalised_avg_kl_per_token'] = augs_avg_kl_divs_per_token
+                # Variable Discription: Dictionary showing the average kl_divs for each aug
+                    row[f'{normaliser}_normalised_avg_kl_divs_per_aug_dict'] = {k: float(v) for k, v in results['avg_kl_div_per_aug'].items()}
+                    
+                # Variable Description: For each normalisation method, the average and max kl_divergence (used for scoring)
+                for ratio in [0, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]:
+                    avg = results[f"Min_{ratio*100}% of Avg Kl_Div"]
+                    maxed = results[f"Min_{ratio*100}% of Max Kl_Div"]
+                    
+                    avg_title = f"{normaliser}_normalised_Min_{ratio*100}% of Avg Kl_Div"
+                    max_title = f"{normaliser}_normalised_Min_{ratio*100}% of Max Kl_Div"
+                    
+                    method_metrics[method][avg_title].append((avg, label))
+                    method_metrics[method][avg_title].append((maxed, label))
+                        
+            for metric in row:
+                examplewise_metrics_dict[method][metric][examples_seen] = row[metric]   
                 
         examples_seen += 1
     
     with open(f"{output_dir}/examplewise_additional_metrics.json", "w") as f:
         json.dump(examplewise_metrics_dict,f)
         
-        
-    # Metrics to Skip AUC Calculations as they are not doable
-    partwise_metrics_dict = {}
-    skipped_auc_metrics = ['Avg_kl_per_token','Full_renyi_05_Token','avg_kl_div_per_aug','avg_entropies_per_aug','Max_kl_per_token', 'All_ver_kl_per_token','token_regions']
-                
+    
+    # ======================================================================================================
+    # 
+    # ======================================================================================================
+    
+    
+    
+    # =======================================================================================================
+    # Partwise Metrics (AUC, Acc, TPR) for all metrics each across all examples
+    # ========================================================================================================
     for method, metrics in method_metrics.items():
         if method not in partwise_metrics_dict:
                 partwise_metrics_dict[method] = {}
@@ -201,22 +206,19 @@ def fig_fpr_tpr_img(all_output, output_dir, fpr_cap):
             
             partwise_metrics_dict[method][legend] = {'AUC':auc, 'Accuracy': acc, f'TPR@{fpr_cap*100}% FPR': low}
         
-        
-        
         plt.figure(figsize=(4,3))
         
         method_output_dir = f"{output_dir}/{method}"
         os.makedirs(method_output_dir, exist_ok=True)
         with open(f"{method_output_dir}/auc.txt", "w") as f:
             for metric, data in metrics.items():
+                # If Metric raw value not score, skip
                 if metric in skipped_auc_metrics:
                     continue
                 
                 predictions, labels = zip(*data)
                 legend, auc, acc, low = do_plot(predictions, labels, legend=metric, metric='auc', output_dir=method_output_dir, fpr_cap=fpr_cap)
                 f.write(f'{legend}   AUC {auc:.4f}, Accuracy {acc:.4f}, TPR@{fpr_cap*100}% FPR of {low:.4f}\n')
-        
-        
 
         plt.semilogx()
         plt.semilogy()

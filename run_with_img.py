@@ -22,7 +22,8 @@ from PIL import Image
 from io import BytesIO
 import re
 
-from torchvision.transforms import RandomResizedCrop, RandomRotation, RandomAffine, ColorJitter 
+from torchvision.transforms import RandomResizedCrop, RandomRotation, RandomAffine, ColorJitter
+# from torchvision.transforms.v2 import GaussianNoise
 from scipy.stats import entropy
 import statistics
 
@@ -63,6 +64,40 @@ def parse_args():
     parser.add_argument("--test_run", action="store_true", help="Run a quick test")
     args = parser.parse_args()
     return args
+
+
+from PIL import Image
+import numpy as np
+
+# Gaussian Noise Custom Class
+class AddGaussianNoisePIL:
+    def __init__(self, mean=0., std=10., clip=True):
+        self.mean = mean
+        self.std = std
+        self.clip = clip
+
+    def __call__(self, image):
+        if not isinstance(image, Image.Image):
+            raise TypeError(f"Expected PIL Image, got {type(image)}")
+
+        # Convert to NumPy array
+        arr = np.array(image).astype(np.float32)
+
+        # Add Gaussian noise
+        noise = np.random.normal(self.mean, self.std, arr.shape)
+        noisy = arr + noise
+
+        # Clip values to valid range
+        if self.clip:
+            noisy = np.clip(noisy, 0, 255)
+
+        # Convert back to PIL Image
+        return Image.fromarray(noisy.astype(np.uint8))
+
+    def __repr__(self):
+        return f"{self.__class__.__name__}(mean={self.mean}, std={self.std}, clip={self.clip})"
+
+
 
 
 def load_image(image_file):
@@ -155,15 +190,18 @@ def generate_text(model, image_processor, conv_mode, img, text, gpu_id, num_gen_
 # Perform MIA Evaluation
 def evaluate_data(model, image_processor, conv_mode, test_data, text, gpu_id, num_gen_token, test_run=False):
     print(f"all data size: {len(test_data)}")
+    
+    # Check Test Run Condition if so will break
     if test_run:
         print("This is a test run")
+        
     all_output = []
     test_data = test_data
     seen = 0
 
     # For example in test_data
     for ex in tqdm(test_data): 
-        if test_run and seen>=5:
+        if test_run and seen>=1:
             print("Test Run Completed Breaking Out of Test Run")
             break
         # Generate Ouput Text From Model
@@ -210,11 +248,13 @@ def inference(model, vis_processor, conv_mode, img_path, text, description, ex, 
     transform2 = RandomRotation(degrees=45)
     transform3 = RandomAffine(degrees=30, translate=(0.1, 0.1), scale=(0.75, 1.25))
     transform4 = ColorJitter(brightness=0.5, contrast=0.5, saturation=0.5, hue=0.5)
+    transform5 = AddGaussianNoisePIL(mean=0., std=10.0, clip=True)
     transformations = {
         'aug_resize': transform1,
         'aug_rotate': transform2,
         'aug_affine': transform3,
-        'aug_cjitter': transform4
+        'aug_cjitter': transform4,
+        'aug_noise': transform5
     }
 
     # Create Multiple Versions of Transformed Image for all transformed images
@@ -230,116 +270,68 @@ def inference(model, vis_processor, conv_mode, img_path, text, description, ex, 
                              'aug_resize_avg_entro': None, 
                              'aug_rotate_avg_entro': None, 
                              'aug_affine_avg_entro': None, 
-                             'aug_cjitter_avg_entro':None}
+                             'aug_cjitter_avg_entro':None,
+                             'aug_noise_avg_entro': None
+                             }
     avg_entropies_per_aug_keys = list(avg_entropies_per_aug.keys())
     transformation_keys = list(transformations.keys())
         
     
     for part in goal_parts:
         
-        
         # ORIGINAL IMAGE
-        org_cross_entro_per_token, metrics, token_regions = mod_infer(model, vis_processor, conv_mode, image, text, description, gpu_id, part)
+        org_cross_entro_per_token, org_metrics, org_token_regions = mod_infer(model, vis_processor, conv_mode, image, text, description, gpu_id, part)
         org_cross_entro_per_token = np.array([t.item() for t in org_cross_entro_per_token])
-        avg_entropies_per_aug['org_avg_entro'] = np.mean(metrics['entropies'])
-        
-        
-        
-        
+        avg_entropies_per_aug['org_avg_entro'] = np.mean(org_metrics['entropies'])
         
         # AUGMENTATION VERSIONS
         augmented_images_CE_per_token = [] #[aug1[avg_CE_per_token],aug2[]]
-        augmented_image_probs = []      #[aug1[ver1[2Darraylogprobs],ver2[]],aug2[]]
+        all_aug_metrics = []
         
         for aug in range(len(augmented_images)):
             CEs_per_token_per_version = [] # 2D Array witn rows as versions and columns as CE per token (floats)
-            probs = [] # 3D Array of log probs for each version in an augmentation
+            all_version_metrics = []
+            # probs = [] # 3D Array of log probs for each version in an augmentation
             aug_avg_entropies = [] # 1D array of the average entropies for each version
             for version in range(len(augmented_images[aug])):
                 image = augmented_images[aug][version]
                 
-                CE_per_token, metrics, token_regions = mod_infer(model, vis_processor, conv_mode, image, text, description, gpu_id, part)
+                CE_per_token, aug_metrics, aug_token_regions = mod_infer(model, vis_processor, conv_mode, image, text, description, gpu_id, part)
                 CEs_per_token_per_version.append(np.array([t.item() for t in CE_per_token])) # Convert Each Entropy per token into float, append the whole 1D array into CEs
-                probs.append(metrics['log_probs'])
-                aug_avg_entropies.append(np.mean(metrics['entropies']))
+                aug_avg_entropies.append(np.mean(aug_metrics['entropies']))
+                all_version_metrics.append(aug_metrics)
                 
             # Define the average entropy across each augmentation across all versions of that augmentation
             avg_entropies_per_aug[avg_entropies_per_aug_keys[aug+1]] = np.mean(aug_avg_entropies)
             
-            augmented_image_probs.append(probs)
+            # augmented_image_probs.append(probs)
+            all_aug_metrics.append(all_version_metrics)
             # Tokenwise average CE across all versions per augmentation
             augmented_images_CE_per_token.append(np.mean(CEs_per_token_per_version,axis=0))
             
-            
-            
-                
-                
-        
-        
-        
-        # # Perform Attack on Each Type of Augmentation
-        # pred = {}
-        # org_cross_entro_per_token, metrics = mod_infer(model, vis_processor, conv_mode, image, text, description, gpu_id, part)
-        # aug1_cross_entro_per_token, metrics1 = mod_infer(model, vis_processor, conv_mode, aug1, text, description, gpu_id, part)
-        # aug2_cross_entro_per_token, metrics2 = mod_infer(model, vis_processor, conv_mode, aug2, text, description, gpu_id, part)
-        # aug3_cross_entro_per_token, metrics3 = mod_infer(model, vis_processor, conv_mode, aug3, text, description, gpu_id, part)
-        # aug4_cross_entro_per_token, metrics4 = mod_infer(model, vis_processor, conv_mode, aug4, text, description, gpu_id, part)
+        ppl = org_metrics["ppl"]
+        all_prob = org_metrics["all_prob"]
+        p1_likelihood = org_metrics["loss"]
+        entropies = org_metrics["entropies"]
+        mod_entropy = org_metrics["modified_entropies"]
+        max_p = org_metrics["max_prob"]
+        org_prob = org_metrics["probabilities"]
+        log_probs = org_metrics["log_probs"]
+        gap_p = org_metrics["gap_prob"]
+        renyi_05 = org_metrics["renyi_05"]
+        renyi_2 = org_metrics["renyi_2"]
 
-        # aug1_prob = metrics1['log_probs']
-        # aug2_prob = metrics2['log_probs']
-        # aug3_prob = metrics3['log_probs']
-        # aug4_prob = metrics4['log_probs']
+        mod_renyi_05 = org_metrics["mod_renyi_05"]
+        mod_renyi_2 = org_metrics["mod_renyi_2"]
         
-        
-        
-        # # Get Perterbation Entropies
-        # org_entropies = metrics['entropies']       
-        # aug1_entropies = metrics1['entropies']
-        # aug2_entropies = metrics2['entropies']
-        # aug3_entropies = metrics3['entropies']
-        # aug4_entropies = metrics4['entropies']
-        
-        # org_avg_entropies = np.mean(org_entropies)
-        # aug1_avg_entropies = np.mean(aug1_entropies)
-        # aug2_avg_entropies = np.mean(aug2_entropies)
-        # aug3_avg_entropies = np.mean(aug3_entropies)
-        # aug4_avg_entropies = np.mean(aug4_entropies)
-        # avg_entropies_per_aug = {'org_avg_entro': org_avg_entropies, 'aug_resize_avg_entro': aug1_avg_entropies, 'aug_rotate_avg_entro': aug2_avg_entropies, 'aug_affine_avg_entro': aug3_avg_entropies, 'aug_cjitter_avg_entro':aug4_avg_entropies}
-        
-        
-        
-        # #Check lengths
-        # if (len({len(aug1_entropies), len(aug2_entropies), len(aug3_entropies), len(aug4_entropies)}) != 1):
-        #     print("Entropy Arrays have different lengths")
-            
-        # # Build Max Entropy Image Logits
-        # else:
-        #     stacked_entropies = np.stack([aug1_entropies, aug2_entropies, aug3_entropies, aug4_entropies], axis=0)
-        #     aug_with_max = np.argmax(stacked_entropies, axis=0)
-        #     max_entropy_image = build_max_entropy_image(aug_with_max, aug_images)
-        
-        # # 
-
-        ppl = metrics["ppl"]
-        all_prob = metrics["all_prob"]
-        p1_likelihood = metrics["loss"]
-        entropies = metrics["entropies"]
-        mod_entropy = metrics["modified_entropies"]
-        max_p = metrics["max_prob"]
-        org_prob = metrics["probabilities"]
-        log_probs = metrics["log_probs"]
-        gap_p = metrics["gap_prob"]
-        renyi_05 = metrics["renyi_05"]
-        renyi_2 = metrics["renyi_2"]
-
-        mod_renyi_05 = metrics["mod_renyi_05"]
-        mod_renyi_2 = metrics["mod_renyi_2"]
+        # original probs called log probs for the purpose of matching which call is needed to get metric values for each verison lateron
+        original_probabilties_dict = {'no_norm':org_prob, 'renyi_05':renyi_05, 'renyi_1': entropies, 'renyi_2': renyi_2, 'renyi_inf': max_p}
 
         pred = get_img_metric(ppl, all_prob, p1_likelihood, entropies, mod_entropy, max_p, org_prob, gap_p, renyi_05, renyi_2, log_probs, mod_renyi_05, mod_renyi_2,
-                                org_cross_entro_per_token, np.array(augmented_images_CE_per_token), augmented_image_probs,transformation_keys)
+                                org_cross_entro_per_token, np.array(augmented_images_CE_per_token), all_aug_metrics,transformation_keys,original_probabilties_dict)
         
         pred['avg_entropies_per_aug'] = avg_entropies_per_aug
-        pred['token_regions'] = token_regions
+        pred['token_regions'] = org_token_regions
         
 
         all_pred[part] = pred
@@ -402,38 +394,7 @@ def mod_infer(model, image_processor, conv_mode, img, instruction, description, 
         'desp' : slice(-descp_encoding.shape[1],None),                   # Description Tokens
         'img_inst_desp' : slice(len(prompt_chunks[0]), None)
         } 
-    
-    
-    # Total sequence length
-    seq_len = logits.shape[1]
-
-    # Initialize all token positions as 'other'
-    token_regions = ['other'] * seq_len
-
-    # Define regions with slices
-    slice_labels = {
-        'img': slice(len(prompt_chunks[0]), -len(prompt_chunks[-1]) + 1),
-        'inst': slice(-len(prompt_chunks[-1]) + 1, -descp_encoding.shape[1]),
-        'desp': slice(-descp_encoding.shape[1], None),
-    }
-
-    # Convert slices to actual indices and assign labels
-    for region, sl in slice_labels.items():
-        start = sl.start if sl.start is not None else 0
-        stop = sl.stop if sl.stop is not None else seq_len
-
-        # Convert negative indices to positive
-        if start < 0:
-            start += seq_len
-        if stop < 0:
-            stop += seq_len
-
-        # Assign labels
-        for i in range(start, stop):
-            token_regions[i] = region
-            
-    token_regions = token_regions[goal_slice_dict[goal]]
-    
+        
 
     img_loss_slice = logits[0, goal_slice_dict['img'].start-1:goal_slice_dict['img'].stop-1, :]
     img_target_np = torch.nn.functional.softmax(img_loss_slice, dim=-1).cpu().numpy()
@@ -454,14 +415,21 @@ def mod_infer(model, image_processor, conv_mode, img, instruction, description, 
     probabilities = torch.nn.functional.softmax(logits_slice, dim=-1)
     log_probabilities = torch.nn.functional.log_softmax(logits_slice, dim=-1)
     
-    # Return the prompt chunks token splits to diffrentiate which tokens belong to which part
-
-    
     # Token-wise Cross Entropy Loss
     cross_entro_loss_per_token =[]
     
     for i in range(len(input_ids)):
-        cross_entro_loss_per_token.append(-log_probabilities[i][input_ids[i]])    
+        cross_entro_loss_per_token.append(-log_probabilities[i][input_ids[i]])
+        
+    # Token Labels
+    label_array = np.array(['other'] * logits.size(1))
+    label_array[len(prompt_chunks[0]): (-len(prompt_chunks[-1])+1)] = 'img'
+    label_array[-len(prompt_chunks[-1])+1:-descp_encoding.shape[1]] = 'inst'
+    label_array[-descp_encoding.shape[1]:None] = 'desp'
+    start, stop, _ = target_slice.indices(len(label_array))
+    token_regions = label_array[start: stop].tolist()
+    
+        
         
     return cross_entro_loss_per_token, get_meta_metrics(input_ids, probabilities, log_probabilities), token_regions
 
