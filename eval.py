@@ -119,8 +119,6 @@ def fig_fpr_tpr_img(all_output, output_dir, fpr_cap):
             # TODO: Add all the renyi token KL distribution metrics
             
             # Formatting for JSON Dump
-            if isinstance(non_norm_avg_kl, np.ndarray):
-                non_norm_avg_kl = non_norm_avg_kl.tolist()
             if isinstance(full_renyi_05_token, np.ndarray):
                 full_renyi_05_token = full_renyi_05_token.tolist()
             avg_entropies_per_aug = {k: float(v) for k, v in avg_entropies_per_aug.items()}
@@ -163,7 +161,7 @@ def fig_fpr_tpr_img(all_output, output_dir, fpr_cap):
                     augs_avg_kl_divs_per_token = augs_avg_kl_divs_per_token.tolist()
                     row[f'{normaliser}_normalised_avg_kl_per_token'] = augs_avg_kl_divs_per_token
                 # Variable Discription: Dictionary showing the average kl_divs for each aug
-                    row[f'{normaliser}_normalised_avg_kl_divs_per_aug_dict'] = {k: float(v) for k, v in results['avg_kl_div_per_aug'].items()}
+                    row[f'{normaliser}_normalised_avg_kl_divs_per_aug_dict'] = {k: float(v) for k, v in results['aug_kl_divs_avg_dict'].items()}
                     
                 # Variable Description: For each normalisation method, the average and max kl_divergence (used for scoring)
                 for ratio in [0, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]:
@@ -177,6 +175,8 @@ def fig_fpr_tpr_img(all_output, output_dir, fpr_cap):
                     method_metrics[method][avg_title].append((maxed, label))
                         
             for metric in row:
+                if metric not in examplewise_metrics_dict[method]:
+                    examplewise_metrics_dict[method][metric] = {}
                 examplewise_metrics_dict[method][metric][examples_seen] = row[metric]   
                 
         examples_seen += 1

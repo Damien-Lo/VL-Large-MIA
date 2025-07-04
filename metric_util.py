@@ -74,7 +74,7 @@ def cross_entropy(p,log_q):
 def cross_entropy_per_token(p,log_q):
     return -np.sum(p*log_q,axis=1)
 
-def get_img_metric(ppl, all_prob, p1_likelihood, entropies, mod_entropy, max_p, org_prob, gap_p, renyi_05, renyi_2, log_probs, mod_renyi_05, mod_renyi_2,
+def get_img_metric(ppl, all_prob, p1_likelihood, entropies, mod_entropy, max_p, org_prob, gap_p, renyi_05_entro, renyi_2_entro, log_probs, mod_renyi_05, mod_renyi_2,
                     org_cross_entro_per_token, augmented_images_CE_per_token, all_aug_metrics, transformation_keys, original_probabilties_dict):
     
     pred = {}
@@ -109,24 +109,26 @@ def get_img_metric(ppl, all_prob, p1_likelihood, entropies, mod_entropy, max_p, 
         all_normalised_kl_divergence_values_dict[metric] = {'augs_kl_divs_per_token': [], 'augs_kl_div_sum': []} # Where each [] holds results for each aug
     
     for metric, base_probs in original_probabilties_dict.items():
-        print(f"Working on metric {metric}")
+        # print(f"Working on metric {metric}")
         count = 1
         for aug_metrics in all_aug_metrics:
-            aug_kl_divs_per_token = []
+            aug_kl_divs_per_token = [] # (num_vers, seq_len)
             aug_kl_div_sum = [] 
-            print(f"Augmentation {count}")
+            # print(f"Augmentation {count}")
             for version_metric in aug_metrics:
                 version_log_probs = (
                     version_metric['log_probs'] if metric == 'no_norm' else version_metric[metric]
                 )
                 
                 if isinstance(base_probs, list):
+                    print("base_probs is a list, converting to torchtensor")
                     base_probs = torch.tensor(base_probs)
                 if isinstance(version_log_probs, list):
+                    print("version_log_probs is a list, converting to torchtensor")
                     version_log_probs = torch.tensor(version_log_probs)
                     
-                print(f"base probs has type: {type(base_probs)} and shape: {base_probs.shape}")
-                print(f"version_log_probs has type: {type(version_log_probs)} and shape: {version_log_probs.shape}")
+                # print(f"base probs has type: {type(base_probs)} and shape: {base_probs.shape}")
+                # print(f"version_log_probs has type: {type(version_log_probs)} and shape: {version_log_probs.shape}")
                 
                 kl = kl_divergence(base_probs.cpu().numpy(), torch.log(base_probs+eps).cpu().numpy(), version_log_probs.cpu().numpy()).mean()
                 kl_per_token = kl_divergence_per_token(base_probs.cpu().numpy(), torch.log(base_probs+eps).cpu().numpy(), version_log_probs.cpu().numpy())
@@ -182,33 +184,33 @@ def get_img_metric(ppl, all_prob, p1_likelihood, entropies, mod_entropy, max_p, 
     pred["Max_Prob_Gap"] = -np.mean(gap_p).item()
     
     # Save the renyi_05 entropy for the full token into pred
-    pred["Full_renyi_05_Token"] = renyi_05
+    pred["Full_renyi_05_Token"] = renyi_05_entro
 
     for ratio in [0, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1]:
-        k_length = int(len(renyi_05)*ratio)
+        k_length = int(len(renyi_05_entro)*ratio)
         if k_length == 0:
             k_length = 1
-        topk_prob = np.sort(renyi_05)[-k_length:]
-        pred[f"Max_{ratio*100}% renyi_05"] = np.mean(topk_prob).item()
+        topk_prob = np.sort(renyi_05_entro)[-k_length:]
+        pred[f"Max_{ratio*100}% renyi_05_entro"] = np.mean(topk_prob).item()
         topk_prob = np.sort(entropies)[-k_length:]
-        pred[f"Max_{ratio*100}% renyi_1"] = np.mean(topk_prob).item()
-        topk_prob = np.sort(renyi_2)[-k_length:]
-        pred[f"Max_{ratio*100}% renyi_2"] = np.mean(topk_prob).item()
+        pred[f"Max_{ratio*100}% renyi_1_entro"] = np.mean(topk_prob).item()
+        topk_prob = np.sort(renyi_2_entro)[-k_length:]
+        pred[f"Max_{ratio*100}% renyi_2_entro"] = np.mean(topk_prob).item()
         topk_prob = np.sort(-np.array(max_p))[-k_length:]
-        pred[f"Max_{ratio*100}% renyi_inf"] = np.mean(topk_prob).item()
+        pred[f"Max_{ratio*100}% renyi_inf_log_probs"] = np.mean(topk_prob).item()
 
     for ratio in [0, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1]:
-        k_length = int(len(renyi_05)*ratio)
+        k_length = int(len(renyi_05_entro)*ratio)
         if k_length == 0:
             k_length = 1
-        topk_prob = np.sort(renyi_05)[:k_length]
-        pred[f"Min_{ratio*100}% renyi_05"] = np.mean(topk_prob).item()
+        topk_prob = np.sort(renyi_05_entro)[:k_length]
+        pred[f"Min_{ratio*100}% renyi_05_entro"] = np.mean(topk_prob).item()
         topk_prob = np.sort(entropies)[:k_length]
-        pred[f"Min_{ratio*100}% renyi_1"] = np.mean(topk_prob).item()
-        topk_prob = np.sort(renyi_2)[:k_length]
-        pred[f"Min_{ratio*100}% renyi_2"] = np.mean(topk_prob).item()
+        pred[f"Min_{ratio*100}% renyi_1_entro"] = np.mean(topk_prob).item()
+        topk_prob = np.sort(renyi_2_entro)[:k_length]
+        pred[f"Min_{ratio*100}% renyi_2_entro"] = np.mean(topk_prob).item()
         topk_prob = np.sort(-np.array(max_p))[:k_length]
-        pred[f"Min_{ratio*100}% renyi_inf"] = np.mean(topk_prob).item()
+        pred[f"Min_{ratio*100}% renyi_inf_log_probs"] = np.mean(topk_prob).item()
         
 
     return pred
@@ -243,12 +245,17 @@ def get_meta_metrics(input_ids, probabilities, log_probabilities):
     modified_entropies = []
     max_prob = []
     gap_prob = []
-    renyi_05 = []
-    renyi_2 = []
+    renyi_05_entro = []
+    renyi_2_entro = []
     losses = []
     modified_entropies_alpha05 = []
     modified_entropies_alpha2 = []
+    
     epsilon = 1e-10
+    renyi_05_probs = []
+    renyi_1_probs = []
+    renyi_2_probs = []
+    renyi_inf_probs = []
 
     input_ids_processed = input_ids[1:]  # Exclude the first token for processing
     for i, token_id in enumerate(input_ids_processed):
@@ -256,24 +263,50 @@ def get_meta_metrics(input_ids, probabilities, log_probabilities):
         token_probs = token_probs.clone().detach().to(dtype=torch.float64)
         token_log_probs = log_probabilities[i, :]  # Log probabilities for entropy
         token_log_probs = token_log_probs.clone().detach().to(dtype=torch.float64)
-
-        entropy = -(token_probs * token_log_probs).sum().item()  # Calculate entropy
-        entropies.append(entropy)
-
+        
         token_probs_safe = torch.clamp(token_probs, min=epsilon, max=1-epsilon)
 
+        #Renyi_1
+        entropy = -(token_probs * token_log_probs).sum().item()  # Calculate entropy
+        entropies.append(entropy)
+        
+        renyi_numerator = torch.pow(token_probs_safe, 1)
+        renyi_denominator = torch.sum(renyi_numerator)
+        renyi_normalized = renyi_numerator / renyi_denominator
+        renyi_1_probs.append(renyi_normalized)
+
+        #Renyi_05
         alpha = 0.5
         renyi_05_ = (1 / (1 - alpha)) * torch.log(torch.sum(torch.pow(token_probs_safe, alpha))).item()
-        renyi_05.append(renyi_05_)
+        renyi_05_entro.append(renyi_05_)
+        
+        renyi_numerator = torch.pow(token_probs_safe, alpha)
+        renyi_denominator = torch.sum(renyi_numerator)
+        renyi_normalized = renyi_numerator / renyi_denominator
+        renyi_05_probs.append(renyi_normalized)
+        
+        #Renyi_2
         alpha = 2
         renyi_2_ = (1 / (1 - alpha)) * torch.log(torch.sum(torch.pow(token_probs_safe, alpha))).item()
-        renyi_2.append(renyi_2_)
+        renyi_2_entro.append(renyi_2_)
+        
+        renyi_numerator = torch.pow(token_probs_safe, alpha)
+        renyi_denominator = torch.sum(renyi_numerator)
+        renyi_normalized = renyi_numerator / renyi_denominator
+        renyi_2_probs.append(renyi_normalized)
 
+        #Renyi_inf
         max_p = token_log_probs.max().item()
         second_p = token_log_probs[token_log_probs != token_log_probs.max()].max().item()
         gap_p = max_p - second_p
         gap_prob.append(gap_p)
         max_prob.append(max_p)
+        
+        renyi_numerator = torch.pow(token_probs_safe, alpha)
+        renyi_denominator = torch.sum(renyi_numerator)
+        renyi_normalized = renyi_numerator / renyi_denominator
+        renyi_inf_probs.append(renyi_normalized)
+        
 
         mink_p = token_log_probs[token_id].item()
         all_prob.append(mink_p)
@@ -313,9 +346,13 @@ def get_meta_metrics(input_ids, probabilities, log_probabilities):
         "probabilities": probabilities,
         "log_probs" : log_probabilities,
         "gap_prob": gap_prob,
-        "renyi_05": renyi_05,
-        "renyi_2": renyi_2,
+        "renyi_05_entro": renyi_05_entro,
+        "renyi_2_entro": renyi_2_entro,
         "mod_renyi_05" : modified_entropies_alpha05,
-        "mod_renyi_2" : modified_entropies_alpha2
+        "mod_renyi_2" : modified_entropies_alpha2,
+        "renyi_05_probs" : torch.stack(renyi_05_probs),
+        "renyi_1_probs" : torch.stack(renyi_1_probs),
+        "renyi_2_probs" : torch.stack(renyi_2_probs),
+        "renyi_inf_probs" : torch.stack(renyi_inf_probs)
     }
 

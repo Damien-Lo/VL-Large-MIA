@@ -201,7 +201,7 @@ def evaluate_data(model, image_processor, conv_mode, test_data, text, gpu_id, nu
 
     # For example in test_data
     for ex in tqdm(test_data): 
-        if test_run and seen>=1:
+        if test_run and seen>=5:
             print("Test Run Completed Breaking Out of Test Run")
             break
         # Generate Ouput Text From Model
@@ -318,16 +318,20 @@ def inference(model, vis_processor, conv_mode, img_path, text, description, ex, 
         org_prob = org_metrics["probabilities"]
         log_probs = org_metrics["log_probs"]
         gap_p = org_metrics["gap_prob"]
-        renyi_05 = org_metrics["renyi_05"]
-        renyi_2 = org_metrics["renyi_2"]
-
+        renyi_05_entro = org_metrics["renyi_05_entro"]
+        renyi_2_entro = org_metrics["renyi_2_entro"]
         mod_renyi_05 = org_metrics["mod_renyi_05"]
         mod_renyi_2 = org_metrics["mod_renyi_2"]
         
+        renyi_05_probs = org_metrics["renyi_05_probs"]
+        renyi_1_probs = org_metrics["renyi_1_probs"]
+        renyi_2_probs = org_metrics["renyi_2_probs"]
+        renyi_inf_probs = org_metrics["renyi_inf_probs"]
+        
         # original probs called log probs for the purpose of matching which call is needed to get metric values for each verison lateron
-        original_probabilties_dict = {'no_norm':org_prob, 'renyi_05':renyi_05, 'renyi_1': entropies, 'renyi_2': renyi_2, 'renyi_inf': max_p}
+        original_probabilties_dict = {'no_norm':org_prob, 'renyi_05_probs':renyi_05_probs, 'renyi_1_probs': renyi_1_probs, 'renyi_2_probs': renyi_2_probs, 'renyi_inf_probs': renyi_inf_probs}
 
-        pred = get_img_metric(ppl, all_prob, p1_likelihood, entropies, mod_entropy, max_p, org_prob, gap_p, renyi_05, renyi_2, log_probs, mod_renyi_05, mod_renyi_2,
+        pred = get_img_metric(ppl, all_prob, p1_likelihood, entropies, mod_entropy, max_p, org_prob, gap_p, renyi_05_entro, renyi_2_entro, log_probs, mod_renyi_05, mod_renyi_2,
                                 org_cross_entro_per_token, np.array(augmented_images_CE_per_token), all_aug_metrics,transformation_keys,original_probabilties_dict)
         
         pred['avg_entropies_per_aug'] = avg_entropies_per_aug
