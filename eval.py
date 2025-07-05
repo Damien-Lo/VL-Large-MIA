@@ -107,10 +107,10 @@ def fig_fpr_tpr_img(all_output, output_dir, fpr_cap):
         # For each method/part, store seperatly in examplewise_metrics_dict
         for method, preds in ex["pred"].items():
             if method not in examplewise_metrics_dict:
-                examplewise_metrics_dict[method] = {"Membership":{},"Across Augs Avg KL-Div per Tkn List":{}, "Renyi 0.5 Entro per Tkn List":{}, "Across Tkn Avg Stnd Entro per Aug":{},"Across Tkn Avg KL-Div per Aug":{}, "Token Sequence Label": {}}
+                examplewise_metrics_dict[method] = {"Membership":{}, "Renyi 0.5 Entro per Tkn List":{}, "Across Tkn Avg Stnd Entro per Aug":{},"Across Tkn Avg KL-Div per Aug":{}, "Token Sequence Label": {}}
                 
             # Creating Row For said example
-            row = {"Membership": label,"Across Augs Avg KL-Div per Tkn List": np.nan, "Renyi 0.5 Entro per Tkn List":np.nan, "Across Tkn Avg Stnd Entro per Aug":np.nan, "Across Tkn Avg KL-Div per Aug":np.nan, "Token Sequence Label":np.nan}
+            row = {"Membership": label, "Renyi 0.5 Entro per Tkn List":np.nan, "Across Tkn Avg Stnd Entro per Aug":np.nan, "Across Tkn Avg KL-Div per Aug":np.nan, "Token Sequence Label":np.nan}
             
             full_renyi_05_token = preds.get("Full_renyi_05_Token") # Python List []
             avg_entropies_per_aug = preds.get("avg_entropies_per_aug") # Python Dict {'org_avg_entro': int, 'aug1_avg_entro': int, 'aug2_avg_entro': int,.....}
@@ -172,7 +172,7 @@ def fig_fpr_tpr_img(all_output, output_dir, fpr_cap):
                     max_title = f"{normaliser}_normalised_Min_{ratio*100}% of Max Kl_Div"
                     
                     method_metrics[method][avg_title].append((avg, label))
-                    method_metrics[method][avg_title].append((maxed, label))
+                    method_metrics[method][max_title].append((maxed, label))
                         
             for metric in row:
                 if metric not in examplewise_metrics_dict[method]:
