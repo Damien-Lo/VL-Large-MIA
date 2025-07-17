@@ -81,18 +81,14 @@ class AddGaussianNoisePIL:
         if not isinstance(image, Image.Image):
             raise TypeError(f"Expected PIL Image, got {type(image)}")
 
-        # Convert to NumPy array
         arr = np.array(image).astype(np.float32)
 
-        # Add Gaussian noise
         noise = np.random.normal(self.mean, self.std, arr.shape)
         noisy = arr + noise
 
-        # Clip values to valid range
         if self.clip:
             noisy = np.clip(noisy, 0, 255)
 
-        # Convert back to PIL Image
         return Image.fromarray(noisy.astype(np.uint8))
 
     def __repr__(self):

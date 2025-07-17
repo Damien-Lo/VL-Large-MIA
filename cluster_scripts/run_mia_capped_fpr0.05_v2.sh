@@ -20,4 +20,5 @@ python /home/clo37/priv/VL-Large-MIA/run_with_img.py \
     --dataset img_Flickr \
     --fpr_cap 0.05 \
     --output_dir /home/clo37/priv/VL-Large-MIA/LatestResults/image_MIA_2025_07_07_16-28\
-    --vers_per_aug 1
+    --vers_per_aug 1\
+    --skip_kl_metrics
