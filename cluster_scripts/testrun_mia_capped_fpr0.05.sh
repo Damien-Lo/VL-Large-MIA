@@ -20,5 +20,6 @@ python /home/clo37/priv/VL-Large-MIA/run_with_img.py \
     --dataset img_Flickr \
     --fpr_cap 0.05 \
     --output_dir /home/clo37/priv/VL-Large-MIA/results/image_MIA_TEST \
-    --test_run
+    --test_run \
+    --skip_kl_metrics
 

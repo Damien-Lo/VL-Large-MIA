@@ -82,123 +82,125 @@ def renyi_divergence_per_token(p, q, alpha, eps=1e-12):
 
 
 
-def get_img_metric(ppl, all_prob, p1_likelihood, entropies, mod_entropy, max_p, org_prob, gap_p, renyi_05_entro, renyi_2_entro, log_probs, mod_renyi_05, mod_renyi_2,
-                    org_cross_entro_per_token, augmented_images_CE_per_token, all_aug_metrics, transformation_keys, original_probabilties_dict):
+def get_img_metric(run_kl_metrics, ppl, all_prob, p1_likelihood, entropies, mod_entropy, max_p, org_prob, gap_p, renyi_05_entro, renyi_2_entro, log_probs, mod_renyi_05, mod_renyi_2,
+                    org_cross_entro_per_token, augmented_images_CE_per_token=None, all_aug_metrics=None, transformation_keys=None, original_probabilties_dict=None):
     
     pred = {}
     
-    # # Convert Each Element to Float
-    org_cross_entro_per_token = np.array([t.item() for t in org_cross_entro_per_token])
     
-    # ======= Cross Entropy Loss ================
-    for ratio in [0, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1]:        
-        avg_entro_loss_per_aug = []
-        k_length = int(len(org_cross_entro_per_token)*ratio)
-        if k_length == 0:
-            k_length = 1
+    if run_kl_metrics:
+            
+        # # Convert Each Element to Float
+        org_cross_entro_per_token = np.array([t.item() for t in org_cross_entro_per_token])
         
-        for aug in augmented_images_CE_per_token:
+        # ======= Cross Entropy Loss ================
+        for ratio in [0, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1]:        
+            avg_entro_loss_per_aug = []
+            k_length = int(len(org_cross_entro_per_token)*ratio)
+            if k_length == 0:
+                k_length = 1
             
-            aug_max_entros_idx = np.argsort(aug)[-k_length:]      # Get the indecies of the largest entropy losses of augmentation
-            aug_max_entros_avg = aug[aug_max_entros_idx].mean()
-            org_max_entros_avg = org_cross_entro_per_token[aug_max_entros_idx].mean()
-            
-            loss = np.abs(org_max_entros_avg - aug_max_entros_avg)
-            avg_entro_loss_per_aug.append(loss)
-            
-        
-        pred[f"Min_{ratio*100}% Cross_Entro_Augs"] = -1* np.mean(avg_entro_loss_per_aug)
-           
-
-    # ======================================= KL Divergence Start ================================================
-    all_normalised_kl_divergence_values_dict = {}
-    eps = 1e-12
-    for metric, base_probs in original_probabilties_dict.items():
-        all_normalised_kl_divergence_values_dict[metric] = {'augs_kl_divs_per_token': [], 'augs_kl_div_sum': []} # Where each [] holds results for each aug
-    
-    for metric, base_probs in original_probabilties_dict.items():
-        # print(f"Working on metric {metric}")
-        count = 1
-        for aug_metrics in all_aug_metrics:
-            aug_kl_divs_per_token = [] # (num_vers, seq_len)
-            aug_kl_div_sum = [] 
-            # print(f"Augmentation {count}")
-            for version_metric in aug_metrics:
-                version_log_probs = (
-                    version_metric['log_probs'] if metric == 'no_norm' else torch.log(version_metric[metric] + eps)
-                )
+            for aug in augmented_images_CE_per_token:
                 
-                if isinstance(base_probs, list):
-                    print("base_probs is a list, converting to torchtensor")
-                    base_probs = torch.tensor(base_probs)
-                if isinstance(version_log_probs, np.ndarray):
-                    print("version_log_probs is a nparray, converting to torchtensor")
-                    version_log_probs = torch.tensor(version_log_probs)
+                aug_max_entros_idx = np.argsort(aug)[-k_length:]      # Get the indecies of the largest entropy losses of augmentation
+                aug_max_entros_avg = aug[aug_max_entros_idx].mean()
+                org_max_entros_avg = org_cross_entro_per_token[aug_max_entros_idx].mean()
+                
+                loss = np.abs(org_max_entros_avg - aug_max_entros_avg)
+                avg_entro_loss_per_aug.append(loss)
+                
+            
+            pred[f"Min_{ratio*100}% Cross_Entro_Augs"] = -1* np.mean(avg_entro_loss_per_aug)
+            
+
+        # ======================================= KL Divergence Start ================================================
+        all_normalised_kl_divergence_values_dict = {}
+        eps = 1e-12
+        for metric, base_probs in original_probabilties_dict.items():
+            all_normalised_kl_divergence_values_dict[metric] = {'augs_kl_divs_per_token': [], 'augs_kl_div_sum': []} # Where each [] holds results for each aug
+        
+        for metric, base_probs in original_probabilties_dict.items():
+            # print(f"Working on metric {metric}")
+            count = 1
+            for aug_metrics in all_aug_metrics:
+                aug_kl_divs_per_token = [] # (num_vers, seq_len)
+                aug_kl_div_sum = [] 
+                # print(f"Augmentation {count}")
+                for version_metric in aug_metrics:
+                    version_log_probs = (
+                        version_metric['log_probs'] if metric == 'no_norm' else torch.log(version_metric[metric] + eps)
+                    )
                     
-                # print(f"base probs has type: {type(base_probs)} and shape: {base_probs.shape}")
-                # print(f"version_log_probs has type: {type(version_log_probs)} and shape: {version_log_probs.shape}")
-                
-                kl = kl_divergence(base_probs.cpu().numpy(), torch.log(base_probs+eps).cpu().numpy(), version_log_probs.cpu().numpy()).mean()
-                kl_per_token = kl_divergence_per_token(base_probs.cpu().numpy(), torch.log(base_probs+eps).cpu().numpy(), version_log_probs.cpu().numpy())
-                
-                aug_kl_divs_per_token.append(kl_per_token)
-                aug_kl_div_sum.append(kl)
-                
-            all_normalised_kl_divergence_values_dict[metric]['augs_kl_divs_per_token'].append(np.mean(aug_kl_divs_per_token, axis=0))
-            all_normalised_kl_divergence_values_dict[metric]['augs_kl_div_sum'].append(np.mean(aug_kl_div_sum))
-            count += 1
-    
-    # Defining average kl for each type of augmentation for each normalisation method
-    for metric, storage in all_normalised_kl_divergence_values_dict.items():
-        aug_kl_divs_avg_dict = {'org_avg_kl_div': 0}
-        title = f'avg_kl_div_per_aug_{str(metric)}_normalised'
-        for i in range(len(transformation_keys)):
-            aug_kl_divs_avg_dict[transformation_keys[i]] = storage['augs_kl_div_sum'][i]
+                    if isinstance(base_probs, list):
+                        print("base_probs is a list, converting to torchtensor")
+                        base_probs = torch.tensor(base_probs)
+                    if isinstance(version_log_probs, np.ndarray):
+                        print("version_log_probs is a nparray, converting to torchtensor")
+                        version_log_probs = torch.tensor(version_log_probs)
+                        
+                    # print(f"base probs has type: {type(base_probs)} and shape: {base_probs.shape}")
+                    # print(f"version_log_probs has type: {type(version_log_probs)} and shape: {version_log_probs.shape}")
+                    
+                    kl = kl_divergence(base_probs.cpu().numpy(), torch.log(base_probs+eps).cpu().numpy(), version_log_probs.cpu().numpy()).mean()
+                    kl_per_token = kl_divergence_per_token(base_probs.cpu().numpy(), torch.log(base_probs+eps).cpu().numpy(), version_log_probs.cpu().numpy())
+                    
+                    aug_kl_divs_per_token.append(kl_per_token)
+                    aug_kl_div_sum.append(kl)
+                    
+                all_normalised_kl_divergence_values_dict[metric]['augs_kl_divs_per_token'].append(np.mean(aug_kl_divs_per_token, axis=0))
+                all_normalised_kl_divergence_values_dict[metric]['augs_kl_div_sum'].append(np.mean(aug_kl_div_sum))
+                count += 1
         
-        all_normalised_kl_divergence_values_dict[metric]['aug_kl_divs_avg_dict'] = aug_kl_divs_avg_dict
-       
-       
-        # Mink of Averag tokens or max per token 
-        all_per_token_kl_avg = np.mean(all_normalised_kl_divergence_values_dict[metric]['augs_kl_divs_per_token'], axis=0)
-        all_per_token_kl_max = np.max(all_normalised_kl_divergence_values_dict[metric]['augs_kl_divs_per_token'], axis=0)
+        # Defining average kl for each type of augmentation for each normalisation method
+        for metric, storage in all_normalised_kl_divergence_values_dict.items():
+            aug_kl_divs_avg_dict = {'org_avg_kl_div': 0}
+            title = f'avg_kl_div_per_aug_{str(metric)}_normalised'
+            for i in range(len(transformation_keys)):
+                aug_kl_divs_avg_dict[transformation_keys[i]] = storage['augs_kl_div_sum'][i]
+            
+            all_normalised_kl_divergence_values_dict[metric]['aug_kl_divs_avg_dict'] = aug_kl_divs_avg_dict
         
-        for ratio in [0, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]:
-            k_length = int(len(all_per_token_kl_avg)*ratio)
-            if k_length == 0:
-                k_length = 1
-            avg_kls = np.sort(all_per_token_kl_avg)[-k_length:]
-            max_kls = np.sort(all_per_token_kl_max)[-k_length:]
-            all_normalised_kl_divergence_values_dict[metric][f"Min_{ratio*100}% of Avg Kl_Div"] = -1* np.mean(avg_kls).item() 
-            all_normalised_kl_divergence_values_dict[metric][f"Min_{ratio*100}% of Max Kl_Div"] = -1* np.mean(max_kls).item()    
-    
-    pred['kl_divergence_results'] = all_normalised_kl_divergence_values_dict
-
-#======================= KL Divergence End ================================================================
-
-#======================= Renyi Divergence Start ================================================================
-    alpha_values = [0.25,0.5,2,4]
-    
-    for alpha in alpha_values:
-        renyi_divs_per_token = []
-        for version_metric in all_aug_metrics[0]:  # No normalised metrics
-            renyi_divs_per_token.append(renyi_divergence_per_token(org_prob.cpu().numpy(), version_metric['probabilities'].cpu().numpy(),alpha))
-            
-            
-        avg_renyi_divs_per_token = np.mean(renyi_divs_per_token, axis=0)
-        max_renyi_divs_per_token = np.max(renyi_divs_per_token, axis=0)
         
-        for ratio in [0, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]:
-            k_length = int(len(avg_renyi_divs_per_token)*ratio)
-            if k_length == 0:
-                k_length = 1
-            avg_renyi_kls = np.sort(avg_renyi_divs_per_token)[-k_length:]
-            max_renyi_kls = np.sort(max_renyi_divs_per_token)[-k_length:]
-            pred[f"Min_{ratio*100}% avg_renyi_divergence_alpha{alpha}"] = -1* np.mean(avg_renyi_kls).item()
-            pred[f"Min_{ratio*100}% max_renyi_divergence_alpha{alpha}"] = -1* np.mean(max_renyi_kls).item()
+            # Mink of Averag tokens or max per token 
+            all_per_token_kl_avg = np.mean(all_normalised_kl_divergence_values_dict[metric]['augs_kl_divs_per_token'], axis=0)
+            all_per_token_kl_max = np.max(all_normalised_kl_divergence_values_dict[metric]['augs_kl_divs_per_token'], axis=0)
             
+            for ratio in [0, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]:
+                k_length = int(len(all_per_token_kl_avg)*ratio)
+                if k_length == 0:
+                    k_length = 1
+                avg_kls = np.sort(all_per_token_kl_avg)[-k_length:]
+                max_kls = np.sort(all_per_token_kl_max)[-k_length:]
+                all_normalised_kl_divergence_values_dict[metric][f"Min_{ratio*100}% of Avg Kl_Div"] = -1* np.mean(avg_kls).item() 
+                all_normalised_kl_divergence_values_dict[metric][f"Min_{ratio*100}% of Max Kl_Div"] = -1* np.mean(max_kls).item()    
+        
+        pred['kl_divergence_results'] = all_normalised_kl_divergence_values_dict
+
+        #======================= KL Divergence End ================================================================
+
+        #======================= Renyi Divergence Start ================================================================
+        alpha_values = [0.25,0.5,2,4]
+        for alpha in alpha_values:
+            renyi_divs_per_token = []
+            for version_metric in all_aug_metrics[0]:  # No normalised metrics
+                renyi_divs_per_token.append(renyi_divergence_per_token(org_prob.cpu().numpy(), version_metric['probabilities'].cpu().numpy(),alpha))
+                
+                
+            avg_renyi_divs_per_token = np.mean(renyi_divs_per_token, axis=0)
+            max_renyi_divs_per_token = np.max(renyi_divs_per_token, axis=0)
+            
+            for ratio in [0, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]:
+                k_length = int(len(avg_renyi_divs_per_token)*ratio)
+                if k_length == 0:
+                    k_length = 1
+                avg_renyi_kls = np.sort(avg_renyi_divs_per_token)[-k_length:]
+                max_renyi_kls = np.sort(max_renyi_divs_per_token)[-k_length:]
+                pred[f"Min_{ratio*100}% avg_renyi_divergence_alpha{alpha}"] = -1* np.mean(avg_renyi_kls).item()
+                pred[f"Min_{ratio*100}% max_renyi_divergence_alpha{alpha}"] = -1* np.mean(max_renyi_kls).item()
+                    
 
 
-#======================= Renyi Divergence End ================================================================
+        #======================= Renyi Divergence End ================================================================
 
 
     # mink

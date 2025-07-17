@@ -62,6 +62,7 @@ def parse_args():
     parser.add_argument("--fpr_cap", type=float, default=0.05)
     parser.add_argument("--vers_per_aug", type=int, default=5)
     parser.add_argument("--test_run", action="store_true", help="Run a quick test")
+    parser.add_argument("--skip_kl_metrics", action="store_true", help="Run KL metrics")
     args = parser.parse_args()
     return args
 
@@ -188,7 +189,7 @@ def generate_text(model, image_processor, conv_mode, img, text, gpu_id, num_gen_
     return output_text
 
 # Perform MIA Evaluation
-def evaluate_data(model, image_processor, conv_mode, test_data, text, gpu_id, num_gen_token, test_run=False):
+def evaluate_data(model, image_processor, conv_mode, test_data, text, gpu_id, num_gen_token, test_run=False, run_kl_metrics=True):
     print(f"all data size: {len(test_data)}")
     
     # Check Test Run Condition if so will break
@@ -209,7 +210,7 @@ def evaluate_data(model, image_processor, conv_mode, test_data, text, gpu_id, nu
         # description = ''
         # 
         
-        new_ex = inference(model, image_processor, conv_mode, ex['image'], text, description, ex, gpu_id)
+        new_ex = inference(model, image_processor, conv_mode, ex['image'], text, description, ex, gpu_id, run_kl_metrics)
 
         all_output.append(new_ex)
         
@@ -233,7 +234,7 @@ def load_conversation_template(model_name):
     return conv_mode
 
 # 
-def inference(model, vis_processor, conv_mode, img_path, text, description, ex, gpu_id):
+def inference(model, vis_processor, conv_mode, img_path, text, description, ex, gpu_id, run_kl_metrics):
     goal_parts = ['img','inst_desp','inst','desp','img_inst_desp']
     all_pred = {}
 
@@ -242,39 +243,41 @@ def inference(model, vis_processor, conv_mode, img_path, text, description, ex, 
     else:
         image = Image.open(img_path).convert('RGB')  
         
-    
-    # Define the transformations
-    transform1 = RandomResizedCrop(size=(256, 256))
-    transform2 = RandomRotation(degrees=45)
-    transform3 = RandomAffine(degrees=30, translate=(0.1, 0.1), scale=(0.75, 1.25))
-    transform4 = ColorJitter(brightness=0.5, contrast=0.5, saturation=0.5, hue=0.5)
-    transform5 = AddGaussianNoisePIL(mean=0., std=20.0, clip=True)
-    transformations = {
-        'aug_resize': transform1,
-        'aug_rotate': transform2,
-        'aug_affine': transform3,
-        'aug_cjitter': transform4,
-        'aug_noise': transform5
-    }
-
-    # Create Multiple Versions of Transformed Image for all transformed images
-    augmented_images = [] # Row: augmentations, Col: Versions
-    
-    for transformation in transformations:
-        versions = []
-        for i in range(args.vers_per_aug):
-            versions.append(transformations[transformation](image))
-        augmented_images.append(versions)
         
-    avg_entropies_per_aug = {'org_avg_entro': None, 
-                             'aug_resize_avg_entro': None, 
-                             'aug_rotate_avg_entro': None, 
-                             'aug_affine_avg_entro': None, 
-                             'aug_cjitter_avg_entro':None,
-                             'aug_noise_avg_entro': None
-                             }
-    avg_entropies_per_aug_keys = list(avg_entropies_per_aug.keys())
-    transformation_keys = list(transformations.keys())
+    # Only Run if we want kl-div metircs
+    if run_kl_metrics:
+        # Define the transformations
+        transform1 = RandomResizedCrop(size=(256, 256))
+        transform2 = RandomRotation(degrees=45)
+        transform3 = RandomAffine(degrees=30, translate=(0.1, 0.1), scale=(0.75, 1.25))
+        transform4 = ColorJitter(brightness=0.5, contrast=0.5, saturation=0.5, hue=0.5)
+        transform5 = AddGaussianNoisePIL(mean=0., std=20.0, clip=True)
+        transformations = {
+            'aug_resize': transform1,
+            'aug_rotate': transform2,
+            'aug_affine': transform3,
+            'aug_cjitter': transform4,
+            'aug_noise': transform5
+        }
+
+        # Create Multiple Versions of Transformed Image for all transformed images
+        augmented_images = [] # Row: augmentations, Col: Versions
+        
+        for transformation in transformations:
+            versions = []
+            for i in range(args.vers_per_aug):
+                versions.append(transformations[transformation](image))
+            augmented_images.append(versions)
+            
+        avg_entropies_per_aug = {'org_avg_entro': None, 
+                                'aug_resize_avg_entro': None, 
+                                'aug_rotate_avg_entro': None, 
+                                'aug_affine_avg_entro': None, 
+                                'aug_cjitter_avg_entro':None,
+                                'aug_noise_avg_entro': None
+                                }
+        avg_entropies_per_aug_keys = list(avg_entropies_per_aug.keys())
+        transformation_keys = list(transformations.keys())
         
     
     for part in goal_parts:
@@ -282,33 +285,10 @@ def inference(model, vis_processor, conv_mode, img_path, text, description, ex, 
         # ORIGINAL IMAGE
         org_cross_entro_per_token, org_metrics, org_token_regions = mod_infer(model, vis_processor, conv_mode, image, text, description, gpu_id, part)
         org_cross_entro_per_token = np.array([t.item() for t in org_cross_entro_per_token])
-        avg_entropies_per_aug['org_avg_entro'] = np.mean(org_metrics['entropies'])
         
-        # AUGMENTATION VERSIONS
-        augmented_images_CE_per_token = [] #[aug1[avg_CE_per_token],aug2[]]
-        all_aug_metrics = []
+        if run_kl_metrics:
+            avg_entropies_per_aug['org_avg_entro'] = np.mean(org_metrics['entropies'])
         
-        for aug in range(len(augmented_images)):
-            CEs_per_token_per_version = [] # 2D Array witn rows as versions and columns as CE per token (floats)
-            all_version_metrics = []
-            # probs = [] # 3D Array of log probs for each version in an augmentation
-            aug_avg_entropies = [] # 1D array of the average entropies for each version
-            for version in range(len(augmented_images[aug])):
-                image = augmented_images[aug][version]
-                
-                CE_per_token, aug_metrics, aug_token_regions = mod_infer(model, vis_processor, conv_mode, image, text, description, gpu_id, part)
-                CEs_per_token_per_version.append(np.array([t.item() for t in CE_per_token])) # Convert Each Entropy per token into float, append the whole 1D array into CEs
-                aug_avg_entropies.append(np.mean(aug_metrics['entropies']))
-                all_version_metrics.append(aug_metrics)
-                
-            # Define the average entropy across each augmentation across all versions of that augmentation
-            avg_entropies_per_aug[avg_entropies_per_aug_keys[aug+1]] = np.mean(aug_avg_entropies)
-            
-            # augmented_image_probs.append(probs)
-            all_aug_metrics.append(all_version_metrics)
-            # Tokenwise average CE across all versions per augmentation
-            augmented_images_CE_per_token.append(np.mean(CEs_per_token_per_version,axis=0))
-            
         ppl = org_metrics["ppl"]
         all_prob = org_metrics["all_prob"]
         p1_likelihood = org_metrics["loss"]
@@ -328,14 +308,46 @@ def inference(model, vis_processor, conv_mode, img_path, text, description, ex, 
         renyi_2_probs = org_metrics["renyi_2_probs"]
         renyi_inf_probs = org_metrics["renyi_inf_probs"]
         
-        # original probs called log probs for the purpose of matching which call is needed to get metric values for each verison lateron
-        original_probabilties_dict = {'no_norm':org_prob, 'renyi_05_probs':renyi_05_probs, 'renyi_1_probs': renyi_1_probs, 'renyi_2_probs': renyi_2_probs, 'renyi_inf_probs': renyi_inf_probs}
-
-        pred = get_img_metric(ppl, all_prob, p1_likelihood, entropies, mod_entropy, max_p, org_prob, gap_p, renyi_05_entro, renyi_2_entro, log_probs, mod_renyi_05, mod_renyi_2,
-                                org_cross_entro_per_token, np.array(augmented_images_CE_per_token), all_aug_metrics,transformation_keys,original_probabilties_dict)
         
-        pred['avg_entropies_per_aug'] = avg_entropies_per_aug
-        pred['token_regions'] = org_token_regions
+        # AUGMENTATION VERSIONS
+        if run_kl_metrics:
+            augmented_images_CE_per_token = [] #[aug1[avg_CE_per_token],aug2[]]
+            all_aug_metrics = []
+            
+            for aug in range(len(augmented_images)):
+                CEs_per_token_per_version = [] # 2D Array witn rows as versions and columns as CE per token (floats)
+                all_version_metrics = []
+                # probs = [] # 3D Array of log probs for each version in an augmentation
+                aug_avg_entropies = [] # 1D array of the average entropies for each version
+                for version in range(len(augmented_images[aug])):
+                    image = augmented_images[aug][version]
+                    
+                    CE_per_token, aug_metrics, aug_token_regions = mod_infer(model, vis_processor, conv_mode, image, text, description, gpu_id, part)
+                    CEs_per_token_per_version.append(np.array([t.item() for t in CE_per_token])) # Convert Each Entropy per token into float, append the whole 1D array into CEs
+                    aug_avg_entropies.append(np.mean(aug_metrics['entropies']))
+                    all_version_metrics.append(aug_metrics)
+                    
+                # Define the average entropy across each augmentation across all versions of that augmentation
+                avg_entropies_per_aug[avg_entropies_per_aug_keys[aug+1]] = np.mean(aug_avg_entropies)
+                
+                # augmented_image_probs.append(probs)
+                all_aug_metrics.append(all_version_metrics)
+                # Tokenwise average CE across all versions per augmentation
+                augmented_images_CE_per_token.append(np.mean(CEs_per_token_per_version,axis=0))
+            
+        
+            # original probs called log probs for the purpose of matching which call is needed to get metric values for each verison lateron
+            original_probabilties_dict = {'no_norm':org_prob, 'renyi_05_probs':renyi_05_probs, 'renyi_1_probs': renyi_1_probs, 'renyi_2_probs': renyi_2_probs, 'renyi_inf_probs': renyi_inf_probs}
+
+            pred = get_img_metric(run_kl_metrics, ppl, all_prob, p1_likelihood, entropies, mod_entropy, max_p, org_prob, gap_p, renyi_05_entro, renyi_2_entro, log_probs, mod_renyi_05, mod_renyi_2,
+                                    org_cross_entro_per_token, np.array(augmented_images_CE_per_token), all_aug_metrics,transformation_keys,original_probabilties_dict)
+            
+            pred['avg_entropies_per_aug'] = avg_entropies_per_aug
+            pred['token_regions'] = org_token_regions
+        
+        else:
+            pred = get_img_metric(run_kl_metrics, ppl, all_prob, p1_likelihood, entropies, mod_entropy, max_p, org_prob, gap_p, renyi_05_entro, renyi_2_entro, log_probs, mod_renyi_05, mod_renyi_2,
+                                    org_cross_entro_per_token)
         
 
         all_pred[part] = pred
@@ -446,6 +458,8 @@ if __name__ == '__main__':
     args = parse_args()
     num_gen_token = args.num_gen_token
     dataset = args.dataset
+    run_kl_metrics = not args.skip_kl_metrics
+    print(f"run_kl_metrics set to: {str(run_kl_metrics)}")
 
     #For corruption
     severity = args.severity
@@ -483,7 +497,7 @@ if __name__ == '__main__':
     text = 'Describe this image concisely.'
 
     # Perform MIA
-    all_output = evaluate_data(model, image_processor, conv_mode, data, text, args.gpu_id, num_gen_token, test_run=args.test_run)
+    all_output = evaluate_data(model, image_processor, conv_mode, data, text, args.gpu_id, num_gen_token, test_run=args.test_run, run_kl_metrics=run_kl_metrics)
     
     # Export Output
     all_output_path = f'{output_dir}/all_output.pkl'
@@ -491,4 +505,4 @@ if __name__ == '__main__':
         pickle.dump(all_output, f) 
 
     print(f"Output Directory is: {output_dir}")
-    fig_fpr_tpr_img(all_output, output_dir, fpr_cap=args.fpr_cap)
+    fig_fpr_tpr_img(all_output, output_dir, fpr_cap=args.fpr_cap, run_kl_metrics=run_kl_metrics)
