@@ -1,7 +1,10 @@
 import numpy as np
 
-test = np.array([[1,2],
-                 [1,2],
-                 [1,2]])
+test = [2,3,5,1,5]
 
-print(np.mean(test,axis=1))
+labels = ['a','b','c','d','e','f']
+
+for i in range(len(test)):
+    test[i] = labels[test[i]]
+    
+print(test)

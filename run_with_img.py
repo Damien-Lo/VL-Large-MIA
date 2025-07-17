@@ -248,7 +248,7 @@ def inference(model, vis_processor, conv_mode, img_path, text, description, ex, 
     transform2 = RandomRotation(degrees=45)
     transform3 = RandomAffine(degrees=30, translate=(0.1, 0.1), scale=(0.75, 1.25))
     transform4 = ColorJitter(brightness=0.5, contrast=0.5, saturation=0.5, hue=0.5)
-    transform5 = AddGaussianNoisePIL(mean=0., std=10.0, clip=True)
+    transform5 = AddGaussianNoisePIL(mean=0., std=20.0, clip=True)
     transformations = {
         'aug_resize': transform1,
         'aug_rotate': transform2,

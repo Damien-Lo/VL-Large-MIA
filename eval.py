@@ -151,7 +151,7 @@ def fig_fpr_tpr_img(all_output, output_dir, fpr_cap):
             # Handle All KL-Divergence Results
             all_normalised_kl_divergence_values_dict = preds.get("kl_divergence_results")    
                 #Include metrics (non_norm, renyi_05, renyi_1, renyi_2, renyi_inf):
-                # For each of these metrics, it includes: (augs_kl_divs_per_token, augs_kl_div_sum, aug_kl_divs_avg_dict,
+                # For each of these metrics, it includes: (augs_kl_divs_per_token, augs_kl_div_sum ,aug_kl_divs_avg_dict,
                 #                                       "Min_{ratio*100}% of Avg Kl_Div", "Min_{ratio*100}% of Max Kl_Div")
                 
             for normaliser, results in all_normalised_kl_divergence_values_dict.items():
