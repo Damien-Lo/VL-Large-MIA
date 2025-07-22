@@ -21,5 +21,6 @@ python /home/clo37/priv/VL-Large-MIA/run_with_img.py \
     --fpr_cap 0.05 \
     --output_dir /home/clo37/priv/VL-Large-MIA/results/image_MIA_TEST \
     --test_run \
-    --skip_kl_metrics
+    --skip_kl_metrics \
+    --pretrained_model_base "lmsys/vicuna-7b-v1.5"
 

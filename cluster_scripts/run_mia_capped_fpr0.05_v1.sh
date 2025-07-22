@@ -4,6 +4,7 @@
 #SBATCH --gres=gpu:1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
+#SBATCH --mem=300G
 
 
 # Load environment
@@ -19,6 +20,8 @@ python /home/clo37/priv/VL-Large-MIA/run_with_img.py \
     --num_gen_token 32 \
     --dataset img_Flickr \
     --fpr_cap 0.05 \
-    --output_dir /home/clo37/priv/VL-Large-MIA/LatestResults/image_MIA_2025_07_08_15-26 \
+    --output_dir /home/clo37/priv/VL-Large-MIA/LatestResults/image_MIA_2025_07_21_17-42 \
     --vers_per_aug 1 \
-    --skip_kl_metrics
+    --skip_kl_metrics \
+    --pretrained_model_base "lmsys/vicuna-7b-v1.5" \
+    --model_type full_fine_tuned

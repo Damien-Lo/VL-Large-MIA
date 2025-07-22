@@ -11,6 +11,7 @@ import random
 import os
 import pandas as pd
 import json
+import torch
 
 
 matplotlib.rcParams['pdf.fonttype'] = 42
@@ -82,7 +83,10 @@ def fig_fpr_tpr(all_output, output_dir, fpr_cap):
     plt.savefig(f"{output_dir}/auc.png")
 
 def fig_fpr_tpr_img(all_output, output_dir, fpr_cap, run_kl_metrics):
-    examples_seen = 0
+    
+    out_dir = f"{output_dir}/"
+    os.makedirs(out_dir, exist_ok=True)
+    
     fpr_cap = fpr_cap
     print(f"All Output Size: {len(all_output)}")
     print("output_dir", output_dir)
@@ -90,17 +94,25 @@ def fig_fpr_tpr_img(all_output, output_dir, fpr_cap, run_kl_metrics):
     # Output Dictionaries 
     partwise_metrics_dict = {}
     method_metrics = defaultdict(lambda: defaultdict(list))
+    pretrained_method_metrics = defaultdict(lambda: defaultdict(list))
     examplewise_metrics_dict = {}
+    
+
+    
     
     # Metrics Not Appropiate for AUC
     skipped_auc_metrics = ['Avg_non_normalised_kl_per_token','Full_renyi_05_Token','avg_kl_div_per_aug',
                            'avg_entropies_per_aug','Max_kl_per_token', 'All_ver_kl_per_token','token_regions',
                            'Avg_renyi_05_kl_per_token','Avg_renyi_1_kl_per_token','Avg_renyi_2_kl_per_token',
-                           'Avg_renyi_inf_kl_per_token']
+                           'Avg_renyi_inf_kl_per_token', "Original Probs Dict", "Per Token Loss"]
     
     # =======================================================================================================
     # PER EXAMPLE METRICS (Token Distributions, Per Token Values) (Not Sutable for AUC)
     # ========================================================================================================
+    
+    examples_seen = 0
+    per_token_loss_output_dict = {}    
+    
     for ex in all_output:
         label = ex["label"]
         
@@ -146,6 +158,8 @@ def fig_fpr_tpr_img(all_output, output_dir, fpr_cap, run_kl_metrics):
                 # Handle KL-Divergence results seperatly
                 if metric =='kl_divergence_results':
                     continue
+                if metric ==  "Original Probs Dict":
+                    continue
                 
                 method_metrics[method][metric].append((prediction, label))
                 
@@ -180,9 +194,38 @@ def fig_fpr_tpr_img(all_output, output_dir, fpr_cap, run_kl_metrics):
                 for metric in row:
                     if metric not in examplewise_metrics_dict[method]:
                         examplewise_metrics_dict[method][metric] = {}
-                    examplewise_metrics_dict[method][metric][examples_seen] = row[metric]   
-                
+                    examplewise_metrics_dict[method][metric][examples_seen] = row[metric]
+
+        
+            # Formating Dict to by nparray
+            per_token_CE_loss = preds.get("Per Token Loss")
+            if method not in per_token_loss_output_dict:
+                per_token_loss_output_dict[method] = {}
+            
+            per_token_loss_output_dict[method][examples_seen] = {"Label": label, "Per Token CE Loss": per_token_CE_loss}
+                  
         examples_seen += 1
+        
+    with open(f"{output_dir}/per_token_loss.json", "w") as f:
+        json.dump(per_token_loss_output_dict,f)
+        
+    # for example_number in range(len(all_output)):
+    #     # Getting Reference Model Based Metrics 
+    #     reference_model_original_probs_dict = all_pretrained_output[example_number]["pred"][method]["Original Probs Dict"]
+    #     fft_model_original_probs_dict = all_output[example_number]["pred"][method]["Original Probs Dict"]
+        
+    #     for normaliser, probs in fft_model_original_probs_dict.items():
+    #         reference_adjusted_probs = np.abs(probs.cpu().numpy() - reference_model_original_probs_dict[normaliser].cpu().numpy())
+            
+    #         # Min-k for refernce adjusted
+    #         for ratio in [0, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]:
+    #             k_length = int(len(reference_adjusted_probs)*ratio)
+    #             if k_length == 0:
+    #                 k_length = 1
+    #             avg_mink_reference_adjusted_probs = np.mean(np.sort(reference_adjusted_probs)[-k_length:])
+                
+    #             title = f"{normaliser}_normalised_Min_{ratio*100}% of Reference Model Adjusted Probs"
+    #             method_metrics[method][title].append((avg_mink_reference_adjusted_probs, label))
     
     with open(f"{output_dir}/examplewise_additional_metrics.json", "w") as f:
         json.dump(examplewise_metrics_dict,f)
@@ -202,12 +245,25 @@ def fig_fpr_tpr_img(all_output, output_dir, fpr_cap, run_kl_metrics):
                 partwise_metrics_dict[method] = {}
         
         for metric, data in metrics.items():
+            if metric == "CE Loss Per Token":
+                pretrained_predictions, pretrained_labels = zip(*pretrained_method_metrics[method][metric])
+            
+            
             if metric in skipped_auc_metrics:
                 continue
             predictions, labels = zip(*data)
             legend, auc, acc, low = do_plot(predictions, labels, legend=metric, metric='auc', output_dir=None, fpr_cap=fpr_cap)
             
             partwise_metrics_dict[method][legend] = {'AUC':auc, 'Accuracy': acc, f'TPR@{fpr_cap*100}% FPR': low}
+
+            
+            
+            # if metric.startswith("Min_") and metric.endswith("% Prob"):
+            #     pretrained_predictions, pretrained_labels = zip(*pretrained_method_metrics[method][metric])
+            #     reference_adjusted_score = np.array(predictions) - np.array(pretrained_predictions)
+            #     legend, auc, acc, low = do_plot(reference_adjusted_score, labels, legend="Reference Model Adjusted", metric='auc', output_dir=None, fpr_cap=fpr_cap)
+            #     partwise_metrics_dict[method][legend] = {'AUC':auc, 'Accuracy': acc, f'TPR@{fpr_cap*100}% FPR': low}
+            
         
         plt.figure(figsize=(4,3))
         

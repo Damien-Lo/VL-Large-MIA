@@ -210,6 +210,7 @@ def get_img_metric(run_kl_metrics, ppl, all_prob, p1_likelihood, entropies, mod_
             k_length = 1
         topk_prob = np.sort(all_prob)[:k_length]
         pred[f"Min_{ratio*100}% Prob"] = -1* np.mean(topk_prob).item()
+        
 
     pred["Modified_entropy"] = np.nanmean(mod_entropy).item()
 
@@ -389,6 +390,7 @@ def get_meta_metrics(input_ids, probabilities, log_probabilities):
         "renyi_05_probs" : torch.stack(renyi_05_probs),
         "renyi_1_probs" : torch.stack(renyi_1_probs),
         "renyi_2_probs" : torch.stack(renyi_2_probs),
-        "renyi_inf_probs" : torch.stack(renyi_inf_probs)
+        "renyi_inf_probs" : torch.stack(renyi_inf_probs),
+        "per_token_loss": losses
     }
 

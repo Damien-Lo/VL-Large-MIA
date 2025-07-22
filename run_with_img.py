@@ -1,5 +1,6 @@
 import argparse
 import torch
+import os
 
 from llava.constants import (
     IMAGE_TOKEN_INDEX,
@@ -39,6 +40,10 @@ import numpy as np
 from datasets import load_dataset
 from eval import *
 import pickle
+from transformers import AutoModel
+from transformers import AutoTokenizer
+from huggingface_hub import hf_hub_download
+from llava.model.language_model.llava_llama import LlavaLlamaForCausalLM, LlavaConfig
 
 
 import sys
@@ -61,8 +66,10 @@ def parse_args():
     parser.add_argument("--severity", type=int, default=6)
     parser.add_argument("--fpr_cap", type=float, default=0.05)
     parser.add_argument("--vers_per_aug", type=int, default=5)
+    parser.add_argument("--model_type", type=str, default="full_fine_tuned")
     parser.add_argument("--test_run", action="store_true", help="Run a quick test")
     parser.add_argument("--skip_kl_metrics", action="store_true", help="Run KL metrics")
+    parser.add_argument("--pretrained_model_base", type=str, default="lmsys/vicuna-7b-v1.5")
     args = parser.parse_args()
     return args
 
@@ -93,7 +100,6 @@ class AddGaussianNoisePIL:
 
     def __repr__(self):
         return f"{self.__class__.__name__}(mean={self.mean}, std={self.std}, clip={self.clip})"
-
 
 
 
@@ -304,6 +310,10 @@ def inference(model, vis_processor, conv_mode, img_path, text, description, ex, 
         renyi_2_probs = org_metrics["renyi_2_probs"]
         renyi_inf_probs = org_metrics["renyi_inf_probs"]
         
+        per_token_loss = org_metrics["per_token_loss"]
+        
+        original_probabilties_dict = {'no_norm':org_prob, 'renyi_05_probs':renyi_05_probs, 'renyi_1_probs': renyi_1_probs, 'renyi_2_probs': renyi_2_probs, 'renyi_inf_probs': renyi_inf_probs}
+        
         
         # AUGMENTATION VERSIONS
         if run_kl_metrics:
@@ -333,17 +343,20 @@ def inference(model, vis_processor, conv_mode, img_path, text, description, ex, 
             
         
             # original probs called log probs for the purpose of matching which call is needed to get metric values for each verison lateron
-            original_probabilties_dict = {'no_norm':org_prob, 'renyi_05_probs':renyi_05_probs, 'renyi_1_probs': renyi_1_probs, 'renyi_2_probs': renyi_2_probs, 'renyi_inf_probs': renyi_inf_probs}
+            
 
             pred = get_img_metric(run_kl_metrics, ppl, all_prob, p1_likelihood, entropies, mod_entropy, max_p, org_prob, gap_p, renyi_05_entro, renyi_2_entro, log_probs, mod_renyi_05, mod_renyi_2,
                                     org_cross_entro_per_token, np.array(augmented_images_CE_per_token), all_aug_metrics,transformation_keys,original_probabilties_dict)
             
             pred['avg_entropies_per_aug'] = avg_entropies_per_aug
             pred['token_regions'] = org_token_regions
+            pred['Per Token Loss'] = per_token_loss
         
         else:
             pred = get_img_metric(run_kl_metrics, ppl, all_prob, p1_likelihood, entropies, mod_entropy, max_p, org_prob, gap_p, renyi_05_entro, renyi_2_entro, log_probs, mod_renyi_05, mod_renyi_2,
                                     org_cross_entro_per_token)
+            
+            pred['Per Token Loss'] = per_token_loss
         
 
         all_pred[part] = pred
@@ -445,9 +458,70 @@ def mod_infer(model, image_processor, conv_mode, img, instruction, description, 
         
     return cross_entro_loss_per_token, get_meta_metrics(input_ids, probabilities, log_probabilities), token_regions
 
+
 # ========================================
 #             Model Initialization
 # ========================================
+
+
+def load_llava_pretrained_reference_model(
+    base_model_path="lmsys/vicuna-7b-v1.5",
+    projector_path="/home/clo37/priv/VL-Large-MIA/checkpoints/pretrained_vicuna-7b-v1.5/llava-v1.5-mlp2x-336px-pretrain-vicuna-7b-v1.5/mm_projector.bin",
+    config_path="liuhaotian/llava-v1.5-mlp2x-336px-pretrain-vicuna-7b-v1.5",
+    device="cuda"
+):
+    tokenizer = AutoTokenizer.from_pretrained(base_model_path, use_fast=False)
+
+    config = LlavaConfig.from_pretrained(config_path)
+    config.mm_vision_tower = "openai/clip-vit-large-patch14-336"
+    config.mm_projector_type = "mlp2x_gelu"
+    config.mm_use_im_start_end = False
+    context_len = config.max_position_embeddings
+
+    # Safely load model from HF with streaming
+    model = LlavaLlamaForCausalLM.from_pretrained(
+        base_model_path,
+        config=config,
+        torch_dtype=torch.float16,
+        low_cpu_mem_usage=False
+    )
+    
+    # print("== MM Projector Structure ==")
+    # for i, layer in enumerate(model.model.mm_projector):
+    #     print(f"[{i}] {layer.__class__.__name__}")
+        
+    # print("Default Projector Weights")
+    # print(model.model.mm_projector[0].weight.device)  
+
+    # Load and apply projector weights
+    projector_state_dict = torch.load(projector_path, map_location="cpu")
+    # print("Projector Weight Keys:")
+    # print(projector_state_dict.keys())
+    
+    proccessed_projector_state_dict = {}
+    for k, v in projector_state_dict.items():
+        if k.startswith("model.mm_projector."):
+            subkey = k.replace("model.mm_projector.", "")
+            proccessed_projector_state_dict[subkey] = v.to(torch.float16)
+    
+    
+    
+    model.model.mm_projector.load_state_dict(proccessed_projector_state_dict, strict=True)
+    
+    for name, param in model.named_parameters():
+        if param.is_meta:
+            print(f"Meta tensor found: {name}")
+    
+    model = model.to(device)
+
+    # Load image processor
+    vision_tower = model.get_vision_tower()
+    if not vision_tower.is_loaded:
+        vision_tower.load_model()
+    vision_tower.to(device, dtype=torch.float16)
+
+    return tokenizer, model, vision_tower.image_processor, context_len
+
 
 if __name__ == '__main__':
 
@@ -464,10 +538,39 @@ if __name__ == '__main__':
     disable_torch_init()
 
     #Load Model
-    model_name = get_model_name_from_path(args.model_path)
-    tokenizer, model, image_processor, context_len = load_pretrained_model(
+    print(f"Loading Model of Type: {args.model_type}")
+    if args.model_type == "full_fine_tuned":
+        model_name = get_model_name_from_path(args.model_path)
+        tokenizer, model, image_processor, context_len = load_pretrained_model(
         args.model_path, args.model_base, model_name, gpu_id = args.gpu_id
     )
+    elif args.model_type == "pretrained":
+        model_name = get_model_name_from_path(args.model_path)
+        pretrained_model_base = args.pretrained_model_base 
+        model_path = '/home/clo37/priv/VL-Large-MIA/checkpoints/pretrained_vicuna-7b-v1.5/llava-v1.5-mlp2x-336px-pretrain-vicuna-7b-v1.5/'
+        tokenizer, model, image_processor, context_len = load_llava_pretrained_reference_model()
+    else:
+        print("Model Type Specified Does not Exist")
+        sys.exit()
+        
+    print(f"{args.model_type} Model Loaded Sucessfully")
+    
+    
+    # print("Loading Fully Fined-tuned Model")
+    # model_name = get_model_name_from_path(args.model_path)
+    # tokenizer, model, image_processor, context_len = load_pretrained_model(
+    #     args.model_path, args.model_base, model_name, gpu_id = args.gpu_id
+    # )
+    # print("Fully Fined-tuned Model Loaded Sucessfully")
+    
+    
+    # #Load Pretrained Reference Model
+    # print("Loading Pretrained Model")
+    # pretrained_model_base = args.pretrained_model_base  # e.g. "lmsys/vicuna-7b-v1.5"
+    # model_path = '/home/clo37/priv/VL-Large-MIA/checkpoints/pretrained_vicuna-7b-v1.5/llava-v1.5-mlp2x-336px-pretrain-vicuna-7b-v1.5/'
+
+    # pretrained_tokenizer, pretrained_model, pretrained_image_processor, pretrained_context_len = load_llava_pretrained_reference_model()
+    # print("Pretrained Model Loaded Sucessfully")
     
     # Load Coversation Mode
     conv_mode = load_conversation_template(model_name)
@@ -493,7 +596,13 @@ if __name__ == '__main__':
     text = 'Describe this image concisely.'
 
     # Perform MIA
+    print("\n \n Beggining getting output")
     all_output = evaluate_data(model, image_processor, conv_mode, data, text, args.gpu_id, num_gen_token, test_run=args.test_run, run_kl_metrics=run_kl_metrics)
+    print("Completed output")
+    
+    # print("\n \n Beggining getting output for pretrained model (no fine tuning)")
+    # all_pretrained_output = evaluate_data(pretrained_model, pretrained_image_processor, conv_mode, data, text, args.gpu_id, num_gen_token, test_run=args.test_run, run_kl_metrics=run_kl_metrics)
+    # print("Completed output for pretrained model (no fine tuning)")
     
     # Export Output
     all_output_path = f'{output_dir}/all_output.pkl'
