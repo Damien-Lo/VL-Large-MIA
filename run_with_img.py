@@ -255,7 +255,7 @@ def inference(model, vis_processor, conv_mode, img_path, text, description, ex, 
         transform4 = ColorJitter(brightness=0.5, contrast=0.5, saturation=0.5, hue=0.5)
         transform5 = AddGaussianNoisePIL(mean=0., std=20.0, clip=True)
         transformations = {
-            'aug_resize': transform1,
+            # 'aug_resize': transform1,
             'aug_rotate': transform2,
             'aug_affine': transform3,
             'aug_cjitter': transform4,
@@ -272,7 +272,6 @@ def inference(model, vis_processor, conv_mode, img_path, text, description, ex, 
             augmented_images.append(versions)
             
         avg_entropies_per_aug = {'org_avg_entro': None, 
-                                'aug_resize_avg_entro': None, 
                                 'aug_rotate_avg_entro': None, 
                                 'aug_affine_avg_entro': None, 
                                 'aug_cjitter_avg_entro':None,
@@ -280,6 +279,7 @@ def inference(model, vis_processor, conv_mode, img_path, text, description, ex, 
                                 }
         avg_entropies_per_aug_keys = list(avg_entropies_per_aug.keys())
         transformation_keys = list(transformations.keys())
+        print(f"Transformations Tested: {transformation_keys}")
         
     
     for part in goal_parts:

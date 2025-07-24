@@ -189,6 +189,9 @@ def get_img_metric(run_kl_metrics, ppl, all_prob, p1_likelihood, entropies, mod_
             avg_renyi_divs_per_token = np.mean(renyi_divs_per_token, axis=0)
             max_renyi_divs_per_token = np.max(renyi_divs_per_token, axis=0)
             
+            pred[f"Avg_Renyi_divergence_per_token_alpha_{alpha}"] = avg_renyi_divs_per_token
+            pred[f"Max_Renyi_divergence_per_token_alpha_{alpha}"] = avg_renyi_divs_per_token
+            
             for ratio in [0, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]:
                 k_length = int(len(avg_renyi_divs_per_token)*ratio)
                 if k_length == 0:
